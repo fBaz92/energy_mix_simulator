@@ -27,7 +27,8 @@ from copy import deepcopy
 import numpy as np
 
 from energy_sim.config import (
-    ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, QUARTERS_PER_DAY,
+    ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, CO2_SCENARIOS,
+    QUARTERS_PER_DAY,
 )
 from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import CarbonPriceModel, build_generators
@@ -231,7 +232,7 @@ def main() -> None:
     # This is the status quo dispatch pattern.
     gens_base = build_generators(ITALIAN_MIX, GAS_SCENARIOS['base'])
     for g in gens_base:
-        g.prepare_run(tg, rng, CarbonPriceModel())
+        g.prepare_run(tg, rng, CarbonPriceModel(**CO2_SCENARIOS['base']))
     plot_dispatch_day(gens_base, tg, load, 190,
                       os.path.join(out_dir, 'dispatch_summer.png'),
                       '(Summer, no nuclear)')
@@ -246,7 +247,7 @@ def main() -> None:
     )
     gens_nuc = build_generators(mix_nuc, GAS_SCENARIOS['base'])
     for g in gens_nuc:
-        g.prepare_run(tg, rng, CarbonPriceModel())
+        g.prepare_run(tg, rng, CarbonPriceModel(**CO2_SCENARIOS['base']))
     plot_dispatch_day(gens_nuc, tg, load, 190,
                       os.path.join(out_dir, 'dispatch_summer_nuclear.png'),
                       '(Summer, 20% nuclear)')

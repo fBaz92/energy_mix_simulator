@@ -67,7 +67,7 @@ def tg():
 @pytest.fixture
 def co2():
     """Create a zero-CO2-price model to isolate dispatch logic from carbon costs."""
-    return CarbonPriceModel(price=0.0)
+    return CarbonPriceModel(mu=0.0, sigma=0.0, theta=0.05)
 
 
 class TestMeritOrder:

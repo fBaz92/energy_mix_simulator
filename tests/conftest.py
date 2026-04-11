@@ -42,10 +42,10 @@ def rng():
 
 @pytest.fixture
 def co2_model():
-    """Create a CarbonPriceModel with the default CO2 price (65 EUR/ton).
+    """Create a CarbonPriceModel with the default CO2 scenario (base: mu=65, sigma=10, theta=0.05).
 
     Returns:
-        CarbonPriceModel: Constant CO2 price model used to call
+        CarbonPriceModel: Stochastic O-U CO2 price model used to call
         ``Generator.prepare_run()``.
     """
     return CarbonPriceModel()

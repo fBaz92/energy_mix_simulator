@@ -18,6 +18,7 @@ from energy_sim.config import (
     CLOUD_TRANSITION,
     ITALIAN_MIX,
     COAL_SCENARIOS,
+    CO2_SCENARIOS,
     _solar_envelope,
 )
 
@@ -135,3 +136,24 @@ class TestCoalScenarios:
             assert set(params.keys()) == {'mu', 'sigma', 'theta'}, (
                 f"Coal scenario '{label}' has unexpected keys"
             )
+
+
+class TestCO2Scenarios:
+    """Verify structural completeness of the CO2_SCENARIOS configuration."""
+
+    def test_has_expected_scenarios(self):
+        """CO2_SCENARIOS must contain base, low, and high scenarios."""
+        expected = {'base', 'low', 'high'}
+        assert set(CO2_SCENARIOS.keys()) == expected
+
+    def test_scenario_keys(self):
+        """Each CO2 scenario must have mu, sigma, and theta parameters."""
+        for label, params in CO2_SCENARIOS.items():
+            assert set(params.keys()) == {'mu', 'sigma', 'theta'}, (
+                f"CO2 scenario '{label}' has unexpected keys"
+            )
+
+    def test_base_mu_matches_default(self):
+        """The base CO2 scenario mu must match CO2_PRICE_DEFAULT (65.0 EUR/ton)."""
+        from energy_sim.config import CO2_PRICE_DEFAULT
+        assert CO2_SCENARIOS['base']['mu'] == CO2_PRICE_DEFAULT

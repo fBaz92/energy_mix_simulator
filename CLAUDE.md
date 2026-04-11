@@ -105,8 +105,10 @@ python -m pytest tests/ -v -m "not slow" # skip slow MC sweeps
 
 Items are ordered so that each builds on the previous ones. Implement in sequence.
 
+**IMPORTANT**: Every time a roadmap item is implemented, this roadmap must be updated to reflect the new status (change "not started" to "implemented").
+
 ### 1. CO₂ Emissions Tracking
-**Status**: not started
+**Status**: implemented
 **Priority**: high — low effort, high analytical value
 **Depends on**: nothing (pure post-processing on existing dispatch output)
 
@@ -119,7 +121,7 @@ Implementation:
 - New visualization: carbon intensity vs technology penetration curves; emission breakdown stacked bar.
 
 ### 2. Coal Generator Type
-**Status**: not started
+**Status**: implemented
 **Priority**: high — completes the fossil fuel picture
 **Depends on**: item 1 (coal's high emission factor makes CO₂ tracking essential to evaluate it)
 
@@ -141,7 +143,7 @@ Implementation:
 Note: with high CO₂ prices (>60 EUR/ton), coal SRMC can exceed gas SRMC ("fuel switching"), making merit-order position price-dependent. This is realistic and the model handles it correctly since SRMC is recomputed at each timestep.
 
 ### 3. Stochastic CO₂ Price
-**Status**: not started
+**Status**: implemented
 **Priority**: medium — low effort, enables richer scenario analysis
 **Depends on**: items 1–2 (CO₂ tracking and coal must be in place for the stochastic CO₂ price to produce meaningful fuel-switching dynamics)
 

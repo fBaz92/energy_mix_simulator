@@ -9,7 +9,7 @@ and the build_generators factory (routing logic, zero-capacity filtering).
 import numpy as np
 import pytest
 
-from energy_sim.config import CO2_PRICE_DEFAULT, ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, P_PEAK_GW
+from energy_sim.config import CO2_PRICE_DEFAULT, CO2_SCENARIOS, ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, P_PEAK_GW
 from energy_sim.generators import (
     FuelPriceModel,
     ConstantFuelPrice,
@@ -84,18 +84,60 @@ class TestConstantFuelPrice:
 
 
 class TestCarbonPriceModel:
-    """Verify the CO2 ETS price model (currently constant)."""
+    """Verify the CO2 ETS price model (stochastic O-U process)."""
 
-    def test_default_price(self):
-        """Default constructor must use CO2_PRICE_DEFAULT (65.0 EUR/ton)."""
+    def test_default_mu(self):
+        """Default constructor must use CO2_PRICE_DEFAULT (65.0 EUR/ton) as mu."""
         model = CarbonPriceModel()
-        assert model.price == CO2_PRICE_DEFAULT
+        assert model.mu == CO2_PRICE_DEFAULT
 
-    def test_constant_output(self):
-        """generate_path() must return a flat array of CO2_PRICE_DEFAULT for all timesteps."""
+    def test_default_params(self):
+        """Default constructor must use sigma=10.0 and theta=0.05."""
         model = CarbonPriceModel()
-        path = model.generate_path(100)
-        np.testing.assert_array_equal(path, np.full(100, CO2_PRICE_DEFAULT))
+        assert model.sigma == 10.0
+        assert model.theta == 0.05
+
+    def test_output_shape(self, rng):
+        """generate_path() must return an array of shape (n_steps,) matching the requested length."""
+        model = CarbonPriceModel()
+        path = model.generate_path(35040, rng)
+        assert path.shape == (35040,)
+
+    def test_floor_at_1(self, rng):
+        """All CO2 prices must be >= 1.0 EUR/ton (hard floor in the O-U discretization)."""
+        model = CarbonPriceModel(mu=5.0, sigma=20.0, theta=0.01)
+        path = model.generate_path(35040, rng)
+        assert (path >= 1.0).all()
+
+    def test_first_value_is_mu(self, rng):
+        """The first element of the price path must equal the long-run mean mu (initial condition)."""
+        model = CarbonPriceModel(mu=80.0)
+        path = model.generate_path(100, rng)
+        assert path[0] == 80.0
+
+    def test_stochastic_not_constant(self, rng):
+        """With non-zero sigma, the generated path must not be constant —
+        confirming the O-U process produces actual price variation.
+        """
+        model = CarbonPriceModel(mu=65.0, sigma=10.0, theta=0.05)
+        path = model.generate_path(35040, rng)
+        assert path.std() > 0
+
+    def test_reproducibility(self):
+        """Two paths generated with the same seed must be identical (deterministic RNG)."""
+        m = CarbonPriceModel(mu=65.0, sigma=10.0, theta=0.05)
+        p1 = m.generate_path(1000, np.random.default_rng(7))
+        p2 = m.generate_path(1000, np.random.default_rng(7))
+        np.testing.assert_array_equal(p1, p2)
+
+    def test_scenarios_available(self):
+        """CO2_SCENARIOS must contain at least 'base', 'low', and 'high' entries
+        and each must have mu, sigma, theta keys.
+        """
+        for label in ('base', 'low', 'high'):
+            assert label in CO2_SCENARIOS
+            for key in ('mu', 'sigma', 'theta'):
+                assert key in CO2_SCENARIOS[label]
 
 
 # ── Availability models ────────────────────────────────────────────────

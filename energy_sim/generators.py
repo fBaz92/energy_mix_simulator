@@ -27,7 +27,7 @@ from energy_sim.config import (
     MONTHLY_SOLAR_FACTORS, HOURLY_SOLAR_ENVELOPE,
     MONTHLY_WIND_LAMBDA, WIND_WEIBULL_K,
     WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT,
-    CLOUD_TRANSITION, COAL_SCENARIOS,
+    CLOUD_TRANSITION, COAL_SCENARIOS, CO2_SCENARIOS,
 )
 from energy_sim.models import TimeGrid
 
@@ -118,34 +118,59 @@ class ConstantFuelPrice:
 
 
 class CarbonPriceModel:
-    """CO2 ETS price model. Currently constant, interface ready for stochastic.
+    """CO2 ETS price model using Ornstein-Uhlenbeck mean-reverting process.
+
+    Models EU ETS carbon prices as a continuous mean-reverting stochastic
+    process, with slower mean-reversion than fuel prices (reflecting ETS
+    market structural inertia). A volatile CO₂ price produces realistic
+    fuel-switching dynamics between coal and gas.
 
     Attributes:
-        price (float): CO2 price in EUR per ton.
+        mu (float): Long-run mean CO2 price (EUR/ton).
+        sigma (float): Volatility parameter.
+        theta (float): Mean-reversion speed (lower = slower reversion).
     """
 
-    def __init__(self, price: float = CO2_PRICE_DEFAULT) -> None:
+    def __init__(self, mu: float = CO2_PRICE_DEFAULT,
+                 sigma: float = 10.0, theta: float = 0.05) -> None:
         """Initialize the carbon price model.
 
         Args:
-            price: CO2 price in EUR/ton. Defaults to ``CO2_PRICE_DEFAULT`` (65).
+            mu: Long-run mean CO2 price in EUR/ton.
+                Defaults to ``CO2_PRICE_DEFAULT`` (65).
+            sigma: Volatility of the price process. Defaults to 10.0.
+            theta: Mean-reversion speed. Defaults to 0.05 (slower than
+                fuel prices, reflecting ETS market inertia).
         """
-        self.price = price
+        self.mu = mu
+        self.sigma = sigma
+        self.theta = theta
 
-    def generate_path(self, n_steps: int, rng: np.random.Generator = None,
-                      dt: float = None) -> np.ndarray:
-        """Generate a constant CO2 price path.
+    def generate_path(self, n_steps: int, rng: np.random.Generator,
+                      dt: float = 0.25 / 24 / 365) -> np.ndarray:
+        """Generate a stochastic CO2 price path for one simulated year.
+
+        Uses Euler-Maruyama discretization of the O-U SDE:
+        ``dP = theta * (mu - P) * dt + sigma * dW``.
 
         Args:
-            n_steps: Number of time steps.
-            rng: Unused. Accepted for interface compatibility.
-            dt: Unused. Accepted for interface compatibility.
+            n_steps: Number of time steps (typically 35 040).
+            rng: NumPy random generator instance.
+            dt: Time step in years. Defaults to one quarter-hour
+                (0.25 / 24 / 365).
 
         Returns:
-            np.ndarray: Constant array of shape ``(n_steps,)`` filled with
-                ``self.price``.
+            np.ndarray: CO2 price path of shape ``(n_steps,)`` in EUR/ton,
+                floored at 1.0 EUR.
         """
-        return np.full(n_steps, self.price)
+        prices = np.empty(n_steps)
+        prices[0] = self.mu
+        sqrt_dt = np.sqrt(dt)
+        noise = rng.standard_normal(n_steps)
+        for t in range(1, n_steps):
+            dp = self.theta * (self.mu - prices[t - 1]) * dt + self.sigma * sqrt_dt * noise[t]
+            prices[t] = max(prices[t - 1] + dp, 1.0)
+        return prices
 
 
 # ── Availability models ──────────────────────────────────────────────────

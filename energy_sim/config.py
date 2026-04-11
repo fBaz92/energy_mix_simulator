@@ -191,6 +191,26 @@ Keys:
 """
 
 # ---------------------------------------------------------------------------
+# CO2 price scenarios (EUR/ton)
+# ---------------------------------------------------------------------------
+CO2_SCENARIOS: dict[str, dict[str, float]] = {
+    'base':    {'mu': 65.0, 'sigma': 10.0, 'theta': 0.05},
+    'low':     {'mu': 40.0, 'sigma': 8.0,  'theta': 0.05},
+    'high':    {'mu': 100.0, 'sigma': 15.0, 'theta': 0.05},
+}
+"""CO2 ETS price scenario parameters for the Ornstein-Uhlenbeck carbon price model.
+
+Slower mean-reversion than gas (theta=0.05) reflects the ETS market's
+structural inertia. A volatile CO₂ price creates timesteps where coal is
+cheaper than gas and vice versa, producing realistic fuel-switching behavior.
+
+Keys:
+    mu: Long-run mean CO2 price (EUR/ton).
+    sigma: Volatility.
+    theta: Mean-reversion speed.
+"""
+
+# ---------------------------------------------------------------------------
 # Italian generation mix defaults
 # ---------------------------------------------------------------------------
 ITALIAN_MIX: dict[str, dict] = {
