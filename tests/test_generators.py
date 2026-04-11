@@ -9,7 +9,7 @@ and the build_generators factory (routing logic, zero-capacity filtering).
 import numpy as np
 import pytest
 
-from energy_sim.config import CO2_PRICE_DEFAULT, ITALIAN_MIX, GAS_SCENARIOS, P_PEAK_GW
+from energy_sim.config import CO2_PRICE_DEFAULT, ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, P_PEAK_GW
 from energy_sim.generators import (
     FuelPriceModel,
     ConstantFuelPrice,
@@ -300,16 +300,17 @@ class TestBuildGenerators:
     """Verify the factory function that routes technologies to correct models."""
 
     def test_zero_capacity_excluded(self):
-        """Generators with capacity_gw == 0 (e.g. nuclear in base ITALIAN_MIX)
+        """Generators with capacity_gw == 0 (e.g. nuclear, coal in base ITALIAN_MIX)
         must be excluded from the returned list.
         """
         gens = build_generators(ITALIAN_MIX, GAS_SCENARIOS['base'])
         names = [g.name for g in gens]
         assert 'nuclear' not in names
+        assert 'coal' not in names
 
     def test_italian_mix_base_count(self):
-        """The base ITALIAN_MIX (nuclear=0 GW) must produce exactly 4 generators:
-        gas, solar, wind, hydro_mustrun.
+        """The base ITALIAN_MIX (nuclear=0 GW, coal=0 GW) must produce exactly
+        4 generators: gas, solar, wind, hydro_mustrun.
         """
         gens = build_generators(ITALIAN_MIX, GAS_SCENARIOS['base'])
         assert len(gens) == 4
@@ -344,3 +345,46 @@ class TestBuildGenerators:
         nuc = [g for g in gens if g.gen_type == 'nuclear'][0]
         assert isinstance(nuc.fuel_model, ConstantFuelPrice)
         assert nuc.fuel_model.price == 3.0
+
+    def test_coal_has_fuel_price_model(self):
+        """Coal generators must be assigned a FuelPriceModel (O-U stochastic process)
+        using the coal scenario parameters.
+        """
+        from copy import deepcopy
+        mix = deepcopy(ITALIAN_MIX)
+        mix['coal']['capacity_gw'] = 10.0
+        gens = build_generators(mix, GAS_SCENARIOS['base'], COAL_SCENARIOS['base'])
+        coal = [g for g in gens if g.gen_type == 'coal'][0]
+        assert isinstance(coal.fuel_model, FuelPriceModel)
+        assert coal.fuel_model.mu == COAL_SCENARIOS['base']['mu']
+
+    def test_coal_has_dispatchable_availability(self):
+        """Coal generators must be assigned a DispatchableAvailability model."""
+        from copy import deepcopy
+        mix = deepcopy(ITALIAN_MIX)
+        mix['coal']['capacity_gw'] = 10.0
+        gens = build_generators(mix, GAS_SCENARIOS['base'])
+        coal = [g for g in gens if g.gen_type == 'coal'][0]
+        assert isinstance(coal.availability, DispatchableAvailability)
+
+    def test_coal_emission_factor(self):
+        """Coal emission_factor (0.34 tCO₂/MWh_th) must be higher than gas (0.20),
+        reflecting coal's higher carbon content.
+        """
+        from copy import deepcopy
+        mix = deepcopy(ITALIAN_MIX)
+        mix['coal']['capacity_gw'] = 10.0
+        gens = build_generators(mix, GAS_SCENARIOS['base'])
+        coal = [g for g in gens if g.gen_type == 'coal'][0]
+        gas = [g for g in gens if g.gen_type == 'gas'][0]
+        assert coal.emission_factor > gas.emission_factor
+
+    def test_coal_is_synchronous(self):
+        """Coal generators must provide rotational inertia (H=5.0s > 0)."""
+        from copy import deepcopy
+        mix = deepcopy(ITALIAN_MIX)
+        mix['coal']['capacity_gw'] = 10.0
+        gens = build_generators(mix, GAS_SCENARIOS['base'])
+        coal = [g for g in gens if g.gen_type == 'coal'][0]
+        assert coal.is_synchronous is True
+        assert coal.h_inertia == 5.0

@@ -12,7 +12,7 @@ matrix shapes, marginal cost consistency, and expected price impact sign.
 import numpy as np
 import pytest
 
-from energy_sim.config import ITALIAN_MIX, GAS_SCENARIOS
+from energy_sim.config import ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS
 from energy_sim.simulation import (
     run_monte_carlo,
     sweep_technology,
@@ -84,7 +84,7 @@ class TestRunMonteCarlo:
         assert 50 < mean_ci < 600
 
     def test_only_gas_emits(self):
-        """In the default Italian mix, only gas has emission_factor > 0.
+        """In the default Italian mix (no coal), only gas has emission_factor > 0.
         All other technologies must have zero (or near-zero) emissions.
         """
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
@@ -93,6 +93,30 @@ class TestRunMonteCarlo:
                 assert vals.mean() > 0
             else:
                 np.testing.assert_allclose(vals, 0, atol=1e-10)
+
+    def test_coal_increases_emissions(self):
+        """Adding coal to the mix must increase total emissions compared to
+        the base mix (gas-only fossil), since coal has a higher emission factor.
+        """
+        from copy import deepcopy
+        mix_coal = deepcopy(ITALIAN_MIX)
+        mix_coal['coal']['capacity_gw'] = 15.0
+        r_base = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
+        r_coal = run_monte_carlo(mix_coal, GAS_SCENARIOS['base'],
+                                 COAL_SCENARIOS['base'], n_runs=2, seed=42)
+        assert r_coal['total_emissions'].mean() > r_base['total_emissions'].mean()
+
+    def test_coal_emits_in_mix(self):
+        """When coal is present in the mix with non-zero capacity, it must
+        produce positive emissions in the per-technology breakdown.
+        """
+        from copy import deepcopy
+        mix_coal = deepcopy(ITALIAN_MIX)
+        mix_coal['coal']['capacity_gw'] = 15.0
+        r = run_monte_carlo(mix_coal, GAS_SCENARIOS['base'],
+                            COAL_SCENARIOS['base'], n_runs=2, seed=42)
+        assert 'coal' in r['emissions_by_tech']
+        assert r['emissions_by_tech']['coal'].mean() > 0
 
 
 @pytest.mark.slow

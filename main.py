@@ -1,20 +1,19 @@
 """Entry point for the Energy Mix Monte Carlo Simulator.
 
-Runs the full analysis pipeline in seven sequential steps:
+Runs the full analysis pipeline in eight sequential steps:
 
-1. **Base case**: Monte Carlo simulation of the current Italian mix (no nuclear)
-   under the base gas price scenario. Establishes the reference electricity price.
-2. **Nuclear sensitivity sweep**: varies nuclear penetration from 0% to 30% of
-   total installed capacity. Shows how adding nuclear affects price and inertia.
+1. **Base case**: Monte Carlo simulation of the current Italian mix (no nuclear,
+   no coal) under the base gas price scenario.
+2. **Nuclear sensitivity sweep**: varies nuclear penetration from 0% to 30%.
 3. **Nuclear x Gas heatmap**: cross-analysis of nuclear penetration against three
-   gas price scenarios (base/tension/crisis). Reveals price sensitivity to both
-   variables simultaneously.
+   gas price scenarios (base/tension/crisis).
 4. **Solar sensitivity sweep**: same as step 2 but for solar PV (0%-50%).
-   Allows direct comparison of nuclear vs solar price impact.
-5. **Incremental sensitivity heatmaps**: shows how the marginal value of adding
+5. **Coal sensitivity sweep**: varies coal penetration from 0% to 30%. Coal has
+   high CO₂ emissions but cheaper fuel than gas.
+6. **Incremental sensitivity heatmaps**: shows how the marginal value of adding
    Δ% of nuclear or solar changes at different base penetration levels. Captures
    non-linearity and price cannibalisation effects.
-6. **Dispatch day plots**: single-day merit-order stack visualizations showing
+7. **Dispatch day plots**: single-day merit-order stack visualizations showing
    which generators run at each quarter-hour, for summer/winter with and
    without nuclear.
 
@@ -28,7 +27,7 @@ from copy import deepcopy
 import numpy as np
 
 from energy_sim.config import (
-    ITALIAN_MIX, GAS_SCENARIOS, QUARTERS_PER_DAY,
+    ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, QUARTERS_PER_DAY,
 )
 from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import CarbonPriceModel, build_generators
@@ -70,7 +69,7 @@ def main() -> None:
     # Result: avg_price is the mean annual electricity price across runs
     # (EUR/MWh), avg_inertia is the mean system inertia constant (seconds).
     # These serve as the reference point for all sensitivity analyses.
-    print("\n[1/7] Running base case (Italian mix, no nuclear, gas base)...")
+    print("\n[1/8] Running base case (Italian mix, no nuclear, gas base)...")
     t0 = time.time()
     base_mc = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=30)
     print(f"  Base price: {base_mc['avg_price'].mean():.2f} "
@@ -96,7 +95,7 @@ def main() -> None:
     # reducing the marginal price. The inertia also improves since nuclear
     # is synchronous (H=6s). Curtailment should stay low because nuclear
     # is must-run (CF=0.9) but has high min_stable_pct.
-    print("\n[2/7] Nuclear penetration sweep (base gas scenario)...")
+    print("\n[2/8] Nuclear penetration sweep (base gas scenario)...")
     t0 = time.time()
     nuc_pcts = np.array([0, 5, 10, 15, 20, 25, 30])
     nuc_results = sweep_technology(ITALIAN_MIX, 'nuclear', nuc_pcts,
@@ -121,7 +120,7 @@ def main() -> None:
     # Output: nuclear_gas_heatmap.png — shows how the value of nuclear
     # increases with gas price: at mu=35 the price reduction is modest,
     # but at mu=90 (crisis) nuclear dramatically lowers system cost.
-    print("\n[3/7] Nuclear \u00d7 Gas price heatmap...")
+    print("\n[3/8] Nuclear \u00d7 Gas price heatmap...")
     t0 = time.time()
     price_mat, inertia_mat, gas_labels = build_sensitivity_heatmap(
         ITALIAN_MIX, 'nuclear', GAS_SCENARIOS, nuc_pcts, n_runs=20)
@@ -141,7 +140,7 @@ def main() -> None:
     # - Price reduction is strongest in summer midday, minimal at night
     #
     # Output: solar_sensitivity.png and solar_monthly.png
-    print("\n[4/7] Solar penetration sweep...")
+    print("\n[4/8] Solar penetration sweep...")
     t0 = time.time()
     sol_pcts = np.array([0, 10, 20, 30, 40, 50])
     sol_results = sweep_technology(ITALIAN_MIX, 'solar', sol_pcts,
@@ -156,7 +155,32 @@ def main() -> None:
                              os.path.join(out_dir, 'solar_emissions_breakdown.png'))
     print(f"  Time: {time.time() - t0:.1f}s")
 
-    # ── Step 5: Incremental sensitivity heatmaps ─────────────────────
+    # ── Step 5: Coal penetration sensitivity ─────────────────────────
+    # Coal is a dispatchable thermal generator with high CO₂ emissions
+    # (0.34 tCO₂/MWh_th, ~850 gCO₂/kWh_e) but cheaper fuel than gas.
+    # At current CO₂ prices (~65 EUR/ton), coal SRMC ≈ gas SRMC, making
+    # merit-order position sensitive to CO₂ and fuel price fluctuations.
+    #
+    # Key metrics to watch:
+    # - Price impact: coal may lower price if its SRMC < gas SRMC
+    # - Emissions: adding coal dramatically increases system CO₂
+    # - Inertia: coal is synchronous (H=5s), improving grid stability
+    print("\n[5/8] Coal penetration sweep...")
+    t0 = time.time()
+    coal_pcts = np.array([0, 5, 10, 15, 20, 25, 30])
+    coal_results = sweep_technology(ITALIAN_MIX, 'coal', coal_pcts,
+                                    GAS_SCENARIOS['base'], n_runs=20)
+    plot_sensitivity_curve(coal_results, 'Coal',
+                           os.path.join(out_dir, 'coal_sensitivity.png'))
+    plot_monthly_heatmap(coal_results, 'Coal',
+                         os.path.join(out_dir, 'coal_monthly.png'))
+    plot_carbon_intensity_curve(coal_results, 'Coal',
+                                os.path.join(out_dir, 'coal_co2.png'))
+    plot_emissions_breakdown(coal_results, 'Coal',
+                             os.path.join(out_dir, 'coal_emissions_breakdown.png'))
+    print(f"  Time: {time.time() - t0:.1f}s")
+
+    # ── Step 6: Incremental sensitivity heatmaps ──────────────────────
     # For nuclear and solar, show how the marginal price impact of adding
     # an extra Δ% changes depending on the base penetration level.
     #
@@ -168,7 +192,7 @@ def main() -> None:
     #
     # The function collects all unique penetration levels, runs a single
     # sweep_technology() call, then assembles finite differences.
-    print("\n[5/7] Incremental sensitivity heatmaps...")
+    print("\n[6/8] Incremental sensitivity heatmaps...")
     t0 = time.time()
 
     inc_base_pcts = np.array([0, 5, 10, 15, 20, 25])
@@ -187,12 +211,12 @@ def main() -> None:
                              os.path.join(out_dir, 'solar_incremental.png'))
     print(f"  Time: {time.time() - t0:.1f}s")
 
-    # ── Step 6: Dispatch day plots ────────────────────────────────────
+    # ── Step 7: Dispatch day plots ────────────────────────────────────
     # Generate single-day merit-order stack area charts showing how each
     # generator is dispatched across 96 quarter-hours. These give an
     # intuitive picture of the dispatch dynamics that aggregate statistics
     # (steps 1-4) cannot capture.
-    print("\n[6/7] Dispatch day plots...")
+    print("\n[7/8] Dispatch day plots...")
 
     # Set up the temporal grid, load profile (with 2% noise), and a
     # fixed RNG seed so the plots are reproducible across runs.

@@ -17,6 +17,7 @@ from energy_sim.config import (
     MONTHLY_WIND_LAMBDA,
     CLOUD_TRANSITION,
     ITALIAN_MIX,
+    COAL_SCENARIOS,
     _solar_envelope,
 )
 
@@ -115,6 +116,22 @@ class TestItalianMix:
             assert not missing, f"{tech} missing keys: {missing}"
 
     def test_has_expected_technologies(self):
-        """ITALIAN_MIX must contain gas, solar, wind, nuclear, and hydro_mustrun."""
-        expected = {'gas', 'solar', 'wind', 'nuclear', 'hydro_mustrun'}
+        """ITALIAN_MIX must contain gas, coal, solar, wind, nuclear, and hydro_mustrun."""
+        expected = {'gas', 'coal', 'solar', 'wind', 'nuclear', 'hydro_mustrun'}
         assert set(ITALIAN_MIX.keys()) == expected
+
+
+class TestCoalScenarios:
+    """Verify structural completeness of the COAL_SCENARIOS configuration."""
+
+    def test_has_expected_scenarios(self):
+        """COAL_SCENARIOS must contain base, tension, and crisis scenarios."""
+        expected = {'base', 'tension', 'crisis'}
+        assert set(COAL_SCENARIOS.keys()) == expected
+
+    def test_scenario_keys(self):
+        """Each coal scenario must have mu, sigma, and theta parameters."""
+        for label, params in COAL_SCENARIOS.items():
+            assert set(params.keys()) == {'mu', 'sigma', 'theta'}, (
+                f"Coal scenario '{label}' has unexpected keys"
+            )

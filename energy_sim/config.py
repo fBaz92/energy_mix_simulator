@@ -171,6 +171,26 @@ Keys:
 """
 
 # ---------------------------------------------------------------------------
+# Coal price scenarios (EUR/MWh_th)
+# ---------------------------------------------------------------------------
+COAL_SCENARIOS: dict[str, dict[str, float]] = {
+    'base':    {'mu': 12.0, 'sigma': 3.0, 'theta': 0.05},
+    'tension': {'mu': 18.0, 'sigma': 5.0, 'theta': 0.05},
+    'crisis':  {'mu': 25.0, 'sigma': 8.0, 'theta': 0.05},
+}
+"""Coal price scenario parameters for the Ornstein-Uhlenbeck fuel price model.
+
+Coal is cheaper than gas per MWh_th but has lower volatility and slower
+mean-reversion. With high CO₂ prices (>60 EUR/ton), coal SRMC can exceed
+gas SRMC ("fuel switching").
+
+Keys:
+    mu: Long-run mean price (EUR/MWh_th).
+    sigma: Volatility.
+    theta: Mean-reversion speed.
+"""
+
+# ---------------------------------------------------------------------------
 # Italian generation mix defaults
 # ---------------------------------------------------------------------------
 ITALIAN_MIX: dict[str, dict] = {
@@ -226,6 +246,19 @@ ITALIAN_MIX: dict[str, dict] = {
         'ramp_rate_pct_per_min': 0.03,
         'startup_cost_eur_mw': 200.0,
         'fuel_cost_eur_mwh_th': 3.0,
+    },
+    'coal': {
+        'capacity_gw': 0.0,
+        'capex_per_kw': 1500,
+        'lifetime_years': 40,
+        'vom_eur_mwh': 4.0,
+        'fom_eur_kw_yr': 35.0,
+        'efficiency': 0.40,
+        'emission_factor': 0.34,
+        'h_inertia': 5.0,
+        'min_stable_pct': 0.45,
+        'ramp_rate_pct_per_min': 0.02,
+        'startup_cost_eur_mw': 80.0,
     },
     'hydro_mustrun': {
         'capacity_gw': 8.0,

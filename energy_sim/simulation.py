@@ -12,7 +12,7 @@ from copy import deepcopy
 
 from energy_sim.config import (
     QUARTERS_PER_YEAR, N_MC_RUNS, RANDOM_SEED, P_PEAK_GW,
-    ITALIAN_MIX, GAS_SCENARIOS, QUARTERS_PER_DAY,
+    ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, QUARTERS_PER_DAY,
 )
 from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import CarbonPriceModel, build_generators
@@ -20,6 +20,7 @@ from energy_sim.dispatch import dispatch_year
 
 
 def run_monte_carlo(mix_config: dict, gas_scenario: dict,
+                    coal_scenario: dict | None = None,
                     n_runs: int = N_MC_RUNS,
                     load_noise: float = 0.02,
                     seed: int = RANDOM_SEED) -> dict:
@@ -34,6 +35,8 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
             :data:`~energy_sim.config.ITALIAN_MIX`).
         gas_scenario: Gas price scenario parameters (keys: ``mu``, ``sigma``,
             ``theta``).
+        coal_scenario: Coal price scenario parameters. If ``None``, defaults
+            to ``COAL_SCENARIOS['base']``.
         n_runs: Number of Monte Carlo runs. Defaults to ``N_MC_RUNS``.
         load_noise: Standard deviation of multiplicative Gaussian load noise.
             Defaults to 0.02 (2%).
@@ -73,7 +76,7 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
     for run in range(n_runs):
         rng = np.random.default_rng(seed + run)
 
-        gens = build_generators(mix_config, gas_scenario)
+        gens = build_generators(mix_config, gas_scenario, coal_scenario)
         for g in gens:
             g.prepare_run(tg, rng, co2)
 
@@ -123,7 +126,8 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
 
 def sweep_technology(base_mix: dict, tech: str,
                      penetrations_pct: np.ndarray,
-                     gas_scenario: dict, n_runs: int = 30,
+                     gas_scenario: dict, coal_scenario: dict | None = None,
+                     n_runs: int = 30,
                      seed: int = RANDOM_SEED) -> list[dict]:
     """Sweep technology penetration and collect price/inertia statistics.
 
@@ -136,6 +140,8 @@ def sweep_technology(base_mix: dict, tech: str,
         penetrations_pct: Array of penetration levels in percent of total
             installed capacity.
         gas_scenario: Gas price scenario parameters.
+        coal_scenario: Coal price scenario parameters. If ``None``, defaults
+            to ``COAL_SCENARIOS['base']``.
         n_runs: Number of MC runs per penetration level. Defaults to 30.
         seed: Base random seed. Defaults to ``RANDOM_SEED``.
 
@@ -175,7 +181,19 @@ def sweep_technology(base_mix: dict, tech: str,
             }
             mix[tech].update(nuc_defaults)
 
-        mc = run_monte_carlo(mix, gas_scenario, n_runs=n_runs, seed=seed)
+        # Coal defaults if absent
+        if tech == 'coal' and 'efficiency' not in mix[tech]:
+            coal_defaults = {
+                'capex_per_kw': 1500, 'lifetime_years': 40, 'vom_eur_mwh': 4.0,
+                'fom_eur_kw_yr': 35.0, 'efficiency': 0.40, 'emission_factor': 0.34,
+                'h_inertia': 5.0, 'min_stable_pct': 0.45,
+                'ramp_rate_pct_per_min': 0.02,
+                'startup_cost_eur_mw': 80.0,
+            }
+            mix[tech].update(coal_defaults)
+
+        mc = run_monte_carlo(mix, gas_scenario, coal_scenario,
+                             n_runs=n_runs, seed=seed)
         mean_ebt = {k: v.mean() for k, v in mc['emissions_by_tech'].items()}
         results.append({
             'pct': pct,
@@ -199,6 +217,7 @@ def sweep_technology(base_mix: dict, tech: str,
 def build_sensitivity_heatmap(base_mix: dict, tech: str,
                               gas_scenarios_sweep: dict,
                               penetrations_pct: np.ndarray,
+                              coal_scenario: dict | None = None,
                               n_runs: int = 20,
                               seed: int = RANDOM_SEED) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Build 2D sensitivity data: tech penetration vs gas price scenario.
@@ -236,7 +255,7 @@ def build_sensitivity_heatmap(base_mix: dict, tech: str,
         row_prices = []
         row_inertia = []
         results = sweep_technology(base_mix, tech, penetrations_pct,
-                                   gas_params, n_runs, seed)
+                                   gas_params, coal_scenario, n_runs, seed)
         for r in results:
             row_prices.append(r['mean_price'])
             row_inertia.append(r['mean_inertia'])
@@ -252,6 +271,7 @@ def build_incremental_heatmap(
     base_penetrations_pct: np.ndarray,
     increments_pct: np.ndarray,
     gas_scenario: dict,
+    coal_scenario: dict | None = None,
     n_runs: int = 20,
     seed: int = RANDOM_SEED,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -297,7 +317,7 @@ def build_incremental_heatmap(
     # Single sweep over all unique levels
     sweep_results = sweep_technology(
         base_mix, tech, all_levels_sorted, gas_scenario,
-        n_runs=n_runs, seed=seed,
+        coal_scenario=coal_scenario, n_runs=n_runs, seed=seed,
     )
 
     # Build lookup: penetration % → mean price

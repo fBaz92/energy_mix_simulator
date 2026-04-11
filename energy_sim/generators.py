@@ -27,7 +27,7 @@ from energy_sim.config import (
     MONTHLY_SOLAR_FACTORS, HOURLY_SOLAR_ENVELOPE,
     MONTHLY_WIND_LAMBDA, WIND_WEIBULL_K,
     WIND_CUT_IN, WIND_RATED, WIND_CUT_OUT,
-    CLOUD_TRANSITION,
+    CLOUD_TRANSITION, COAL_SCENARIOS,
 )
 from energy_sim.models import TimeGrid
 
@@ -502,8 +502,8 @@ class Generator:
         r = DISCOUNT_RATE
         n = self.lifetime
         crf = r * (1 + r) ** n / ((1 + r) ** n - 1)
-        avg_cf = {'nuclear': 0.85, 'gas': 0.50, 'solar': 0.15,
-                  'wind': 0.25}.get(self.gen_type, 0.90)
+        avg_cf = {'nuclear': 0.85, 'gas': 0.50, 'coal': 0.55,
+                  'solar': 0.15, 'wind': 0.25}.get(self.gen_type, 0.90)
         fixed = (self.capex_per_kw * crf + self.fom) / (avg_cf * 8760) * 1000
         variable = self.vom
         fuel_avg = (self._fuel_path.mean() / self.efficiency
@@ -515,7 +515,8 @@ class Generator:
 # ── Factory ───────────────────────────────────────────────────────────────
 
 
-def build_generators(mix_config: dict, gas_scenario: dict) -> list[Generator]:
+def build_generators(mix_config: dict, gas_scenario: dict,
+                     coal_scenario: dict | None = None) -> list[Generator]:
     """Build a list of Generator objects from configuration dicts.
 
     Routes each technology type to the appropriate fuel price model and
@@ -528,12 +529,15 @@ def build_generators(mix_config: dict, gas_scenario: dict) -> list[Generator]:
             for format).
         gas_scenario: Gas price scenario parameters (keys: ``mu``, ``sigma``,
             ``theta``) passed to :class:`FuelPriceModel`.
+        coal_scenario: Coal price scenario parameters (keys: ``mu``, ``sigma``,
+            ``theta``). If ``None``, defaults to ``COAL_SCENARIOS['base']``.
 
     Returns:
         list[Generator]: List of initialized Generator objects (one per
             technology with non-zero capacity).
     """
     generators = []
+    coal_params = coal_scenario or COAL_SCENARIOS['base']
 
     for gen_type, params in mix_config.items():
         if params['capacity_gw'] <= 0:
@@ -542,6 +546,8 @@ def build_generators(mix_config: dict, gas_scenario: dict) -> list[Generator]:
         # Fuel model selection
         if gen_type == 'gas':
             fuel_model = FuelPriceModel(**gas_scenario)
+        elif gen_type == 'coal':
+            fuel_model = FuelPriceModel(**coal_params)
         elif gen_type == 'nuclear':
             fuel_model = ConstantFuelPrice(params.get('fuel_cost_eur_mwh_th', 3.0))
         else:
