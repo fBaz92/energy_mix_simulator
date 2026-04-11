@@ -203,3 +203,76 @@ def build_sensitivity_heatmap(base_mix: dict, tech: str,
         inertia_matrix.append(row_inertia)
 
     return np.array(price_matrix), np.array(inertia_matrix), gas_labels
+
+
+def build_incremental_heatmap(
+    base_mix: dict,
+    tech: str,
+    base_penetrations_pct: np.ndarray,
+    increments_pct: np.ndarray,
+    gas_scenario: dict,
+    n_runs: int = 20,
+    seed: int = RANDOM_SEED,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build incremental sensitivity heatmap: marginal price impact of adding
+    Δ% of a technology at different base penetration levels.
+
+    Collects all unique penetration levels needed (base and base+delta pairs),
+    runs a single :func:`sweep_technology` call to avoid redundant MC runs,
+    then assembles the finite-difference matrices.
+
+    Args:
+        base_mix: Base generation mix dictionary.
+        tech: Technology type to sweep (e.g. ``'nuclear'``, ``'solar'``).
+        base_penetrations_pct: Array of base penetration levels in percent
+            (e.g. ``[0, 5, 10, 15, 20, 25]``).
+        increments_pct: Array of incremental Δ% values to test
+            (e.g. ``[1, 2, 5, 10]``).
+        gas_scenario: Gas price scenario parameters.
+        n_runs: Number of MC runs per penetration level. Defaults to 20.
+        seed: Base random seed. Defaults to ``RANDOM_SEED``.
+
+    Returns:
+        tuple: A 2-tuple of:
+
+            - **delta_price_matrix** (np.ndarray): Shape
+              ``(len(base_penetrations_pct), len(increments_pct))``,
+              price difference in EUR/MWh (price at base+delta minus price
+              at base). Negative means adding the technology lowers prices.
+            - **marginal_cost_matrix** (np.ndarray): Same shape,
+              EUR/MWh per percentage point (delta_price / delta_pct).
+    """
+    # Collect all unique penetration levels needed
+    all_levels = set()
+    for base in base_penetrations_pct:
+        all_levels.add(float(base))
+        for delta in increments_pct:
+            all_levels.add(float(base + delta))
+    all_levels_sorted = np.array(sorted(all_levels))
+
+    print(f"\n── Incremental heatmap for {tech}: "
+          f"{len(all_levels_sorted)} unique penetration levels ──")
+
+    # Single sweep over all unique levels
+    sweep_results = sweep_technology(
+        base_mix, tech, all_levels_sorted, gas_scenario,
+        n_runs=n_runs, seed=seed,
+    )
+
+    # Build lookup: penetration % → mean price
+    price_lookup = {r['pct']: r['mean_price'] for r in sweep_results}
+
+    # Assemble matrices
+    n_base = len(base_penetrations_pct)
+    n_inc = len(increments_pct)
+    delta_price_matrix = np.zeros((n_base, n_inc))
+    marginal_cost_matrix = np.zeros((n_base, n_inc))
+
+    for i, base in enumerate(base_penetrations_pct):
+        for j, delta in enumerate(increments_pct):
+            p_base = price_lookup[float(base)]
+            p_target = price_lookup[float(base + delta)]
+            delta_price_matrix[i, j] = p_target - p_base
+            marginal_cost_matrix[i, j] = (p_target - p_base) / delta
+
+    return delta_price_matrix, marginal_cost_matrix

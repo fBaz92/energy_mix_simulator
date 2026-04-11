@@ -1,10 +1,12 @@
-"""Tests for energy_sim.simulation (run_monte_carlo, sweep_technology, build_sensitivity_heatmap).
+"""Tests for energy_sim.simulation (run_monte_carlo, sweep_technology,
+build_sensitivity_heatmap, build_incremental_heatmap).
 
 Validates the Monte Carlo runner for reproducibility, correct output shapes,
 edge cases (single run), and price sanity. Validates sweep_technology for
 correct result length and presence of all expected keys. Validates
 build_sensitivity_heatmap for correct matrix shapes across gas scenarios
-and penetration levels.
+and penetration levels. Validates build_incremental_heatmap for correct
+matrix shapes, marginal cost consistency, and expected price impact sign.
 """
 
 import numpy as np
@@ -15,6 +17,7 @@ from energy_sim.simulation import (
     run_monte_carlo,
     sweep_technology,
     build_sensitivity_heatmap,
+    build_incremental_heatmap,
 )
 
 
@@ -93,3 +96,47 @@ class TestBuildSensitivityHeatmap:
         assert price_mat.shape == (2, 2)
         assert inertia_mat.shape == (2, 2)
         assert len(labels) == 2
+
+
+@pytest.mark.slow
+class TestBuildIncrementalHeatmap:
+    """Verify the incremental sensitivity heatmap builder.
+
+    Tests that build_incremental_heatmap correctly computes finite-difference
+    price impacts (Δ price and marginal cost per %) for a technology at
+    different base penetration levels.
+    """
+
+    def test_shapes(self):
+        """Output matrices must have shape (len(base_pcts), len(increments))."""
+        base_pcts = np.array([0, 10])
+        increments = np.array([2, 5])
+        delta_mat, marginal_mat = build_incremental_heatmap(
+            ITALIAN_MIX, 'nuclear', base_pcts, increments,
+            GAS_SCENARIOS['base'], n_runs=2, seed=0)
+        assert delta_mat.shape == (2, 2)
+        assert marginal_mat.shape == (2, 2)
+
+    def test_marginal_cost_consistent_with_delta(self):
+        """marginal_cost[i,j] must equal delta_price[i,j] / increment[j]."""
+        base_pcts = np.array([0, 10])
+        increments = np.array([2, 5])
+        delta_mat, marginal_mat = build_incremental_heatmap(
+            ITALIAN_MIX, 'nuclear', base_pcts, increments,
+            GAS_SCENARIOS['base'], n_runs=2, seed=0)
+        expected = delta_mat / increments[np.newaxis, :]
+        np.testing.assert_allclose(marginal_mat, expected)
+
+    def test_nuclear_lowers_price(self):
+        """Adding nuclear to the Italian mix should reduce the electricity price
+        (negative delta), since nuclear has lower SRMC than gas.
+        """
+        base_pcts = np.array([0, 10])
+        increments = np.array([5])
+        delta_mat, _ = build_incremental_heatmap(
+            ITALIAN_MIX, 'nuclear', base_pcts, increments,
+            GAS_SCENARIOS['base'], n_runs=3, seed=42)
+        # At least the first row (base=0%) should show a price decrease
+        assert delta_mat[0, 0] < 0, (
+            "Adding 5% nuclear from 0% base should lower the price"
+        )

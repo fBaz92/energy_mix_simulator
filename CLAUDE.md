@@ -15,8 +15,10 @@ energy_sim/
 ├── generators.py      # FuelPriceModel (O-U process), CarbonPriceModel, availability models
 │                      #   (Solar/Wind/MustRun/Dispatchable), Generator class, build_generators()
 ├── dispatch.py        # Vectorized merit-order dispatch with inertia/reserve constraints
-├── simulation.py      # run_monte_carlo, sweep_technology, build_sensitivity_heatmap
-├── visualization.py   # All plotting functions (side-effect only, no logic to test)
+├── simulation.py      # run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
+│                      #   build_incremental_heatmap (Δ price finite-difference analysis)
+├── visualization.py   # All plotting functions incl. plot_incremental_heatmap
+│                      #   (side-effect only, no logic to test)
 └── output/            # Generated PNGs
 
 main.py                # Entry point: runs full pipeline (base case, sweeps, dispatch plots)
@@ -27,7 +29,7 @@ tests/
 ├── test_models.py     # TimeGrid calendar metadata, LoadProfile shape/noise/weekday/holiday
 ├── test_generators.py # Price models, availability models, Generator, build_generators
 ├── test_dispatch.py   # Merit order, marginal pricing, load balance, inertia fix, curtailment
-└── test_simulation.py # MC reproducibility, sweep results, heatmap shapes, price sanity
+└── test_simulation.py # MC reproducibility, sweep results, heatmap shapes, incremental heatmap, price sanity
 
 notebooks/
 └── wind_solar_analysis.ipynb  # Visual analysis of wind/solar profiles and distributions
@@ -98,8 +100,8 @@ This is the most impactful missing feature. Storage has inter-temporal state (SO
 - In `dispatch_year()`, after merit-order dispatch: if marginal price < threshold → charge; if marginal price > threshold → discharge. The threshold can be a rolling percentile of recent prices.
 - This breaks pure vectorization — the SOC loop must be sequential. But it's only one unit, so the loop is O(35040), not O(n_gen × 35040).
 
-### Adding the original sensitivity heatmap (Δ incremental)
-The planned but not yet implemented graph: X = % penetration of tech, Y = incremental Δ% of that tech, color = Δ price. This requires running MC at (X, X+Y) pairs and computing the finite difference. Use `sweep_technology()` as building block.
+### Incremental sensitivity heatmap (Δ price)
+Implemented in `build_incremental_heatmap()` and `plot_incremental_heatmap()`. Shows the marginal price impact of adding Δ% of a technology at different base penetration levels. Collects all unique penetration levels, runs a single `sweep_technology()` call, then assembles finite-difference matrices (delta_price and marginal_cost per %).
 
 ### Making CO2 stochastic
 `CarbonPriceModel` already has the same interface as `FuelPriceModel`. Replace the `generate_path()` implementation with O-U process. Suggested parameters: μ=65, σ=10, θ=0.05 (slower mean-reversion than gas).

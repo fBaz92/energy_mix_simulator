@@ -1,6 +1,6 @@
 """Entry point for the Energy Mix Monte Carlo Simulator.
 
-Runs the full analysis pipeline in five sequential steps:
+Runs the full analysis pipeline in seven sequential steps:
 
 1. **Base case**: Monte Carlo simulation of the current Italian mix (no nuclear)
    under the base gas price scenario. Establishes the reference electricity price.
@@ -11,7 +11,10 @@ Runs the full analysis pipeline in five sequential steps:
    variables simultaneously.
 4. **Solar sensitivity sweep**: same as step 2 but for solar PV (0%-50%).
    Allows direct comparison of nuclear vs solar price impact.
-5. **Dispatch day plots**: single-day merit-order stack visualizations showing
+5. **Incremental sensitivity heatmaps**: shows how the marginal value of adding
+   Δ% of nuclear or solar changes at different base penetration levels. Captures
+   non-linearity and price cannibalisation effects.
+6. **Dispatch day plots**: single-day merit-order stack visualizations showing
    which generators run at each quarter-hour, for summer/winter with and
    without nuclear.
 
@@ -31,17 +34,18 @@ from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import CarbonPriceModel, build_generators
 from energy_sim.simulation import (
     run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
+    build_incremental_heatmap,
 )
 from energy_sim.visualization import (
     plot_heatmap, plot_sensitivity_curve, plot_monthly_heatmap,
-    plot_dispatch_day,
+    plot_incremental_heatmap, plot_dispatch_day,
 )
 
 
 def main() -> None:
     """Run the full simulation and visualization pipeline.
 
-    Executes all five analysis steps sequentially, printing progress and
+    Executes all seven analysis steps sequentially, printing progress and
     key results to stdout. Each step is timed independently.
     """
     # Create the output directory if it doesn't exist. All generated PNGs
@@ -65,7 +69,7 @@ def main() -> None:
     # Result: avg_price is the mean annual electricity price across runs
     # (EUR/MWh), avg_inertia is the mean system inertia constant (seconds).
     # These serve as the reference point for all sensitivity analyses.
-    print("\n[1/5] Running base case (Italian mix, no nuclear, gas base)...")
+    print("\n[1/7] Running base case (Italian mix, no nuclear, gas base)...")
     t0 = time.time()
     base_mc = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=30)
     print(f"  Base price: {base_mc['avg_price'].mean():.2f} "
@@ -86,7 +90,7 @@ def main() -> None:
     # reducing the marginal price. The inertia also improves since nuclear
     # is synchronous (H=6s). Curtailment should stay low because nuclear
     # is must-run (CF=0.9) but has high min_stable_pct.
-    print("\n[2/5] Nuclear penetration sweep (base gas scenario)...")
+    print("\n[2/7] Nuclear penetration sweep (base gas scenario)...")
     t0 = time.time()
     nuc_pcts = np.array([0, 5, 10, 15, 20, 25, 30])
     nuc_results = sweep_technology(ITALIAN_MIX, 'nuclear', nuc_pcts,
@@ -107,7 +111,7 @@ def main() -> None:
     # Output: nuclear_gas_heatmap.png — shows how the value of nuclear
     # increases with gas price: at mu=35 the price reduction is modest,
     # but at mu=90 (crisis) nuclear dramatically lowers system cost.
-    print("\n[3/5] Nuclear \u00d7 Gas price heatmap...")
+    print("\n[3/7] Nuclear \u00d7 Gas price heatmap...")
     t0 = time.time()
     price_mat, inertia_mat, gas_labels = build_sensitivity_heatmap(
         ITALIAN_MIX, 'nuclear', GAS_SCENARIOS, nuc_pcts, n_runs=20)
@@ -127,7 +131,7 @@ def main() -> None:
     # - Price reduction is strongest in summer midday, minimal at night
     #
     # Output: solar_sensitivity.png and solar_monthly.png
-    print("\n[4/5] Solar penetration sweep...")
+    print("\n[4/7] Solar penetration sweep...")
     t0 = time.time()
     sol_pcts = np.array([0, 10, 20, 30, 40, 50])
     sol_results = sweep_technology(ITALIAN_MIX, 'solar', sol_pcts,
@@ -138,12 +142,43 @@ def main() -> None:
                          os.path.join(out_dir, 'solar_monthly.png'))
     print(f"  Time: {time.time() - t0:.1f}s")
 
-    # ── Step 5: Dispatch day plots ────────────────────────────────────
+    # ── Step 5: Incremental sensitivity heatmaps ─────────────────────
+    # For nuclear and solar, show how the marginal price impact of adding
+    # an extra Δ% changes depending on the base penetration level.
+    #
+    # Example: adding +5% nuclear when starting from 0% may reduce the
+    # price by X EUR/MWh, but adding the same +5% when starting from 20%
+    # may have a different (usually smaller) effect — diminishing returns.
+    # For solar, high penetrations can even cause price cannibalisation
+    # (near-zero midday prices make further solar less valuable).
+    #
+    # The function collects all unique penetration levels, runs a single
+    # sweep_technology() call, then assembles finite differences.
+    print("\n[5/7] Incremental sensitivity heatmaps...")
+    t0 = time.time()
+
+    inc_base_pcts = np.array([0, 5, 10, 15, 20, 25])
+    inc_deltas = np.array([1, 2, 5, 10])
+
+    delta_nuc, marginal_nuc = build_incremental_heatmap(
+        ITALIAN_MIX, 'nuclear', inc_base_pcts, inc_deltas,
+        GAS_SCENARIOS['base'], n_runs=20)
+    plot_incremental_heatmap(delta_nuc, inc_base_pcts, inc_deltas, 'Nuclear',
+                             os.path.join(out_dir, 'nuclear_incremental.png'))
+
+    delta_sol, marginal_sol = build_incremental_heatmap(
+        ITALIAN_MIX, 'solar', inc_base_pcts, inc_deltas,
+        GAS_SCENARIOS['base'], n_runs=20)
+    plot_incremental_heatmap(delta_sol, inc_base_pcts, inc_deltas, 'Solar PV',
+                             os.path.join(out_dir, 'solar_incremental.png'))
+    print(f"  Time: {time.time() - t0:.1f}s")
+
+    # ── Step 6: Dispatch day plots ────────────────────────────────────
     # Generate single-day merit-order stack area charts showing how each
     # generator is dispatched across 96 quarter-hours. These give an
     # intuitive picture of the dispatch dynamics that aggregate statistics
     # (steps 1-4) cannot capture.
-    print("\n[5/5] Dispatch day plots...")
+    print("\n[6/7] Dispatch day plots...")
 
     # Set up the temporal grid, load profile (with 2% noise), and a
     # fixed RNG seed so the plots are reproducible across runs.

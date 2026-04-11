@@ -158,6 +158,58 @@ def plot_monthly_heatmap(results_list: list[dict], tech_name: str,
     print(f"Saved: {out_path}")
 
 
+def plot_incremental_heatmap(
+    delta_price_matrix: np.ndarray,
+    base_penetrations_pct: np.ndarray,
+    increments_pct: np.ndarray,
+    tech_name: str,
+    out_path: str,
+) -> None:
+    """Plot an incremental sensitivity heatmap showing the price impact of
+    adding Δ% of a technology at various base penetration levels.
+
+    X-axis is the base penetration level, Y-axis is the incremental Δ%.
+    Cell color shows the price change in EUR/MWh (green = price decrease,
+    red = price increase). Annotations show the numeric delta.
+
+    Args:
+        delta_price_matrix: Price difference matrix of shape
+            ``(len(base_penetrations_pct), len(increments_pct))`` in EUR/MWh.
+        base_penetrations_pct: Array of base penetration levels in percent.
+        increments_pct: Array of incremental Δ% values.
+        tech_name: Technology name for labels and title.
+        out_path: File path to save the figure (PNG).
+    """
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    # Transpose so X=base penetration (columns), Y=increment (rows)
+    data = delta_price_matrix.T
+
+    im = ax.imshow(data, aspect='auto', cmap='RdYlGn_r', origin='lower')
+
+    ax.set_xticks(range(len(base_penetrations_pct)))
+    ax.set_xticklabels([f'{p:.0f}%' for p in base_penetrations_pct])
+    ax.set_yticks(range(len(increments_pct)))
+    ax.set_yticklabels([f'+{d:.0f}%' for d in increments_pct])
+    ax.set_xlabel(f'{tech_name} base penetration (% of installed capacity)')
+    ax.set_ylabel(f'Incremental \u0394%')
+    ax.set_title(f'Incremental price impact of adding \u0394% {tech_name}\n'
+                 f'(EUR/MWh change, Monte Carlo)')
+
+    for i in range(len(increments_pct)):
+        for j in range(len(base_penetrations_pct)):
+            val = data[i, j]
+            ax.text(j, i, f'{val:+.1f}',
+                    ha='center', va='center', fontsize=8,
+                    color='white' if abs(val) > abs(data).max() * 0.5 else 'black')
+
+    plt.colorbar(im, ax=ax, label='\u0394 price (EUR/MWh)')
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
 def plot_dispatch_day(generators: list[Generator], time_grid: TimeGrid,
                       load: np.ndarray, day_of_year: int,
                       out_path: str, title_extra: str = "") -> None:
