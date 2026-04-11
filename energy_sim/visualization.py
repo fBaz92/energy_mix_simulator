@@ -210,6 +210,100 @@ def plot_incremental_heatmap(
     print(f"Saved: {out_path}")
 
 
+def plot_carbon_intensity_curve(results_list: list[dict], tech_name: str,
+                                out_path: str) -> None:
+    """Plot carbon intensity and total emissions vs technology penetration.
+
+    Dual-axis line plot: left axis shows mean carbon intensity (gCO₂/kWh),
+    right axis shows total annual emissions (Mt CO₂).
+
+    Args:
+        results_list: List of dicts from :func:`~energy_sim.simulation.sweep_technology`,
+            each with keys ``'pct'``, ``'mean_carbon_intensity'``,
+            ``'mean_emissions'``.
+        tech_name: Technology name for labels and title.
+        out_path: File path to save the figure (PNG).
+    """
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+    pcts = [r['pct'] for r in results_list]
+    ci = [r['mean_carbon_intensity'] for r in results_list]
+    emissions_mt = [r['mean_emissions'] / 1e6 for r in results_list]
+
+    ax1.plot(pcts, ci, 'o-', color='darkgreen', label='Carbon intensity')
+    ax1.set_xlabel(f'{tech_name} penetration (%)')
+    ax1.set_ylabel('Carbon intensity (gCO₂/kWh)', color='darkgreen')
+    ax1.tick_params(axis='y', labelcolor='darkgreen')
+
+    ax2 = ax1.twinx()
+    ax2.plot(pcts, emissions_mt, 's--', color='sienna', label='Total emissions')
+    ax2.set_ylabel('Total annual emissions (Mt CO₂)', color='sienna')
+    ax2.tick_params(axis='y', labelcolor='sienna')
+
+    ax1.set_title(f'CO₂ impact of {tech_name} penetration\n'
+                  f'(Italian mix, Monte Carlo)')
+    fig.legend(loc='upper right', bbox_to_anchor=(0.88, 0.88))
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_emissions_breakdown(results_list: list[dict], tech_name: str,
+                             out_path: str) -> None:
+    """Plot stacked bar chart of CO₂ emissions by technology across penetrations.
+
+    Each bar represents a penetration level; segments show each technology's
+    contribution to total annual emissions.
+
+    Args:
+        results_list: List of dicts from :func:`~energy_sim.simulation.sweep_technology`,
+            each with keys ``'pct'`` and ``'mean_emissions_by_tech'``.
+        tech_name: Technology name for axis labels and title.
+        out_path: File path to save the figure (PNG).
+    """
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    pcts = [r['pct'] for r in results_list]
+    all_techs = set()
+    for r in results_list:
+        all_techs.update(r['mean_emissions_by_tech'].keys())
+    # Only keep techs with non-zero emissions
+    techs = sorted(t for t in all_techs
+                   if any(r['mean_emissions_by_tech'].get(t, 0) > 0
+                          for r in results_list))
+
+    colors = {
+        'gas': '#FF5722',
+        'coal': '#795548',
+        'nuclear': '#9C27B0',
+        'hydro_mustrun': '#2196F3',
+        'solar': '#FFC107',
+        'wind': '#4CAF50',
+    }
+
+    bottom = np.zeros(len(pcts))
+    x = np.arange(len(pcts))
+    for tech in techs:
+        vals = np.array([r['mean_emissions_by_tech'].get(tech, 0) / 1e6
+                         for r in results_list])
+        ax.bar(x, vals, bottom=bottom, label=tech,
+               color=colors.get(tech, '#999'), alpha=0.85)
+        bottom += vals
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'{p:.0f}%' for p in pcts])
+    ax.set_xlabel(f'{tech_name} penetration (% of installed capacity)')
+    ax.set_ylabel('Annual CO₂ emissions (Mt)')
+    ax.set_title(f'CO₂ emissions breakdown by technology\n'
+                 f'(varying {tech_name} penetration)')
+    ax.legend(loc='upper right')
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
 def plot_dispatch_day(generators: list[Generator], time_grid: TimeGrid,
                       load: np.ndarray, day_of_year: int,
                       out_path: str, title_extra: str = "") -> None:

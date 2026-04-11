@@ -16,7 +16,7 @@ Implements a two-phase dispatch algorithm:
 import numpy as np
 from dataclasses import dataclass
 
-from energy_sim.config import H_MIN_SECONDS, P_PEAK_GW
+from energy_sim.config import H_MIN_SECONDS, P_PEAK_GW, P_BASE
 from energy_sim.generators import Generator
 
 
@@ -37,6 +37,9 @@ class DispatchResult:
             in per-unit (load that could not be met).
         gen_names (list[str]): Names of generators in the same order as the
             rows of the ``power`` matrix.
+        emissions (np.ndarray): CO₂ emissions matrix of shape
+            ``(n_generators, 35040)`` in tons CO₂ per quarter-hour.
+            Computed as ``power_pu * P_BASE * 0.25 * emission_factor / efficiency``.
     """
 
     power: np.ndarray
@@ -45,6 +48,7 @@ class DispatchResult:
     h_system: np.ndarray
     unserved: np.ndarray
     gen_names: list[str]
+    emissions: np.ndarray
 
 
 def dispatch_year(generators: list[Generator], load: np.ndarray) -> DispatchResult:
@@ -140,6 +144,15 @@ def dispatch_year(generators: list[Generator], load: np.ndarray) -> DispatchResu
                 if dm.any():
                     marginal_price[t] = srmc_all[dm, t].max()
 
+    # CO₂ emissions: tons per quarter-hour per generator
+    # power_pu * P_BASE(GW) * 0.25(h) = energy in GWh
+    # GWh * 1000 = MWh_e; MWh_e / efficiency = MWh_th; MWh_th * emission_factor = tCO₂
+    emission_factors = np.array([g.emission_factor for g in generators])
+    efficiencies = np.array([g.efficiency for g in generators])
+    safe_eff = np.where(efficiencies > 0, efficiencies, 1.0)
+    emissions = (power * P_BASE * 0.25 * 1000
+                 * emission_factors[:, np.newaxis] / safe_eff[:, np.newaxis])
+
     return DispatchResult(
         power=power,
         marginal_price=marginal_price,
@@ -147,4 +160,5 @@ def dispatch_year(generators: list[Generator], load: np.ndarray) -> DispatchResu
         h_system=h_system,
         unserved=unserved,
         gen_names=[g.name for g in generators],
+        emissions=emissions,
     )

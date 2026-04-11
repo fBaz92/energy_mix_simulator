@@ -39,6 +39,7 @@ from energy_sim.simulation import (
 from energy_sim.visualization import (
     plot_heatmap, plot_sensitivity_curve, plot_monthly_heatmap,
     plot_incremental_heatmap, plot_dispatch_day,
+    plot_carbon_intensity_curve, plot_emissions_breakdown,
 )
 
 
@@ -75,6 +76,11 @@ def main() -> None:
     print(f"  Base price: {base_mc['avg_price'].mean():.2f} "
           f"\u00b1 {base_mc['avg_price'].std():.2f} EUR/MWh")
     print(f"  Mean inertia: {base_mc['avg_inertia'].mean():.2f} s")
+    print(f"  Total CO₂: {base_mc['total_emissions'].mean() / 1e6:.2f} Mt/year")
+    print(f"  Carbon intensity: {base_mc['carbon_intensity'].mean():.0f} gCO₂/kWh")
+    for tech, vals in base_mc['emissions_by_tech'].items():
+        if vals.mean() > 0:
+            print(f"    {tech}: {vals.mean() / 1e6:.2f} Mt/year")
     print(f"  Time: {time.time() - t0:.1f}s")
 
     # ── Step 2: Nuclear penetration sensitivity ───────────────────────
@@ -99,6 +105,10 @@ def main() -> None:
                            os.path.join(out_dir, 'nuclear_sensitivity.png'))
     plot_monthly_heatmap(nuc_results, 'Nuclear',
                          os.path.join(out_dir, 'nuclear_monthly.png'))
+    plot_carbon_intensity_curve(nuc_results, 'Nuclear',
+                                os.path.join(out_dir, 'nuclear_co2.png'))
+    plot_emissions_breakdown(nuc_results, 'Nuclear',
+                             os.path.join(out_dir, 'nuclear_emissions_breakdown.png'))
     print(f"  Time: {time.time() - t0:.1f}s")
 
     # ── Step 3: Nuclear x Gas price 2D heatmap ────────────────────────
@@ -140,6 +150,10 @@ def main() -> None:
                            os.path.join(out_dir, 'solar_sensitivity.png'))
     plot_monthly_heatmap(sol_results, 'Solar PV',
                          os.path.join(out_dir, 'solar_monthly.png'))
+    plot_carbon_intensity_curve(sol_results, 'Solar PV',
+                                os.path.join(out_dir, 'solar_co2.png'))
+    plot_emissions_breakdown(sol_results, 'Solar PV',
+                             os.path.join(out_dir, 'solar_emissions_breakdown.png'))
     print(f"  Time: {time.time() - t0:.1f}s")
 
     # ── Step 5: Incremental sensitivity heatmaps ─────────────────────

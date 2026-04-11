@@ -51,6 +51,12 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
               shape ``(n_runs,)``, in p.u.-quarter-hours.
             - ``'avg_inertia'`` (np.ndarray): Mean system inertia per run,
               shape ``(n_runs,)``, in seconds.
+            - ``'total_emissions'`` (np.ndarray): Total annual CO₂ emissions
+              per run, shape ``(n_runs,)``, in tons.
+            - ``'carbon_intensity'`` (np.ndarray): Average carbon intensity
+              per run, shape ``(n_runs,)``, in gCO₂/kWh.
+            - ``'emissions_by_tech'`` (dict[str, np.ndarray]): Per-technology
+              annual emissions, each shape ``(n_runs,)``, in tons.
     """
     tg = TimeGrid()
     lp = LoadProfile(tg)
@@ -60,6 +66,9 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
     monthly_avg_prices = []
     total_curtailment = []
     avg_inertia = []
+    total_emissions = []
+    carbon_intensity = []
+    emissions_by_tech_lists: dict[str, list[float]] = {}
 
     for run in range(n_runs):
         rng = np.random.default_rng(seed + run)
@@ -81,11 +90,34 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
             monthly[m - 1] = result.marginal_price[mask].mean()
         monthly_avg_prices.append(monthly)
 
+        # CO₂ emissions aggregation
+        run_total_emissions = result.emissions.sum()
+        total_emissions.append(run_total_emissions)
+
+        # Carbon intensity: gCO₂/kWh
+        # Total energy served = sum(power_pu) * P_BASE(GW) * 0.25(h) * 1e6(kW/GW)
+        total_energy_kwh = result.power.sum() * P_PEAK_GW * 0.25 * 1e6
+        # Total emissions in grams = tons * 1e6
+        ci = (run_total_emissions * 1e6 / total_energy_kwh
+              if total_energy_kwh > 0 else 0.0)
+        carbon_intensity.append(ci)
+
+        # Per-technology emissions
+        for i, name in enumerate(result.gen_names):
+            if name not in emissions_by_tech_lists:
+                emissions_by_tech_lists[name] = []
+            emissions_by_tech_lists[name].append(result.emissions[i].sum())
+
+    emissions_by_tech = {k: np.array(v) for k, v in emissions_by_tech_lists.items()}
+
     return {
         'avg_price': np.array(avg_prices),
         'monthly_prices': np.array(monthly_avg_prices),
         'curtailment': np.array(total_curtailment),
         'avg_inertia': np.array(avg_inertia),
+        'total_emissions': np.array(total_emissions),
+        'carbon_intensity': np.array(carbon_intensity),
+        'emissions_by_tech': emissions_by_tech,
     }
 
 
@@ -116,6 +148,10 @@ def sweep_technology(base_mix: dict, tech: str,
             - ``'monthly_mean'`` (np.ndarray): Monthly mean prices, shape ``(12,)``.
             - ``'mean_curtailment'`` (float): Mean total curtailment (p.u.-qh).
             - ``'mean_inertia'`` (float): Mean system inertia (seconds).
+            - ``'mean_emissions'`` (float): Mean total annual CO₂ emissions (tons).
+            - ``'mean_carbon_intensity'`` (float): Mean carbon intensity (gCO₂/kWh).
+            - ``'mean_emissions_by_tech'`` (dict[str, float]): Mean annual
+              emissions per technology (tons).
     """
     results = []
     total_capacity_gw = sum(v['capacity_gw'] for v in base_mix.values())
@@ -140,6 +176,7 @@ def sweep_technology(base_mix: dict, tech: str,
             mix[tech].update(nuc_defaults)
 
         mc = run_monte_carlo(mix, gas_scenario, n_runs=n_runs, seed=seed)
+        mean_ebt = {k: v.mean() for k, v in mc['emissions_by_tech'].items()}
         results.append({
             'pct': pct,
             'mean_price': mc['avg_price'].mean(),
@@ -147,10 +184,14 @@ def sweep_technology(base_mix: dict, tech: str,
             'monthly_mean': mc['monthly_prices'].mean(axis=0),
             'mean_curtailment': mc['curtailment'].mean(),
             'mean_inertia': mc['avg_inertia'].mean(),
+            'mean_emissions': mc['total_emissions'].mean(),
+            'mean_carbon_intensity': mc['carbon_intensity'].mean(),
+            'mean_emissions_by_tech': mean_ebt,
         })
         print(f"  {tech} {pct:.0f}%: price={results[-1]['mean_price']:.2f} EUR/MWh, "
               f"H={results[-1]['mean_inertia']:.2f}s, "
-              f"curt={results[-1]['mean_curtailment']:.1f} p.u.\u00b7qh")
+              f"CO₂={results[-1]['mean_emissions'] / 1e6:.2f} Mt, "
+              f"CI={results[-1]['mean_carbon_intensity']:.0f} gCO₂/kWh")
 
     return results
 

@@ -56,6 +56,44 @@ class TestRunMonteCarlo:
         mean_price = r['avg_price'].mean()
         assert 10 < mean_price < 500
 
+    def test_emissions_output_shapes(self):
+        """Emissions outputs must have correct shapes: total_emissions (n_runs,),
+        carbon_intensity (n_runs,), emissions_by_tech values (n_runs,).
+        """
+        n = 2
+        r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=n, seed=0)
+        assert r['total_emissions'].shape == (n,)
+        assert r['carbon_intensity'].shape == (n,)
+        assert isinstance(r['emissions_by_tech'], dict)
+        for v in r['emissions_by_tech'].values():
+            assert v.shape == (n,)
+
+    def test_emissions_positive(self):
+        """Total emissions must be positive for the Italian mix which includes
+        gas generation with non-zero emission factor.
+        """
+        r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
+        assert (r['total_emissions'] > 0).all()
+
+    def test_carbon_intensity_reasonable(self):
+        """Carbon intensity for the Italian mix (gas-heavy) should be in a
+        reasonable range: 50-600 gCO₂/kWh.
+        """
+        r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
+        mean_ci = r['carbon_intensity'].mean()
+        assert 50 < mean_ci < 600
+
+    def test_only_gas_emits(self):
+        """In the default Italian mix, only gas has emission_factor > 0.
+        All other technologies must have zero (or near-zero) emissions.
+        """
+        r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
+        for tech, vals in r['emissions_by_tech'].items():
+            if tech == 'gas':
+                assert vals.mean() > 0
+            else:
+                np.testing.assert_allclose(vals, 0, atol=1e-10)
+
 
 @pytest.mark.slow
 class TestSweepTechnology:
@@ -76,7 +114,9 @@ class TestSweepTechnology:
         results = sweep_technology(ITALIAN_MIX, 'nuclear', pcts,
                                    GAS_SCENARIOS['base'], n_runs=2, seed=0)
         expected_keys = {'pct', 'mean_price', 'std_price', 'monthly_mean',
-                         'mean_curtailment', 'mean_inertia'}
+                         'mean_curtailment', 'mean_inertia',
+                         'mean_emissions', 'mean_carbon_intensity',
+                         'mean_emissions_by_tech'}
         for r in results:
             assert set(r.keys()) == expected_keys
 

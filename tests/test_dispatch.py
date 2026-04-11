@@ -203,6 +203,62 @@ class TestInertiaConstraint:
         assert result.curtailment.sum() > 0
 
 
+class TestEmissions:
+    """Verify CO₂ emissions computation in dispatch results."""
+
+    def test_emissions_shape(self, tg, co2):
+        """Emissions array must have shape (n_gen, n_t), matching the power array."""
+        g1 = _quick_gen("gas", 30.0, vom=5.0, efficiency=0.58,
+                         emission_factor=0.20, fuel_price=35.0)
+        g2 = _quick_gen("wind", 30.0, vom=1.0, h_inertia=0.0,
+                         emission_factor=0.0)
+        rng = np.random.default_rng(0)
+        for g in [g1, g2]:
+            g.prepare_run(tg, rng, co2)
+        load = np.full(tg.n, g1.capacity_pu * 0.5)
+        result = dispatch_year([g1, g2], load)
+        assert result.emissions.shape == (2, tg.n)
+
+    def test_zero_emission_generator(self, tg, co2):
+        """A generator with emission_factor=0 must produce zero emissions at all
+        timesteps, regardless of dispatch level.
+        """
+        g = _quick_gen("wind", 30.0, vom=1.0, h_inertia=0.0,
+                        emission_factor=0.0)
+        rng = np.random.default_rng(0)
+        g.prepare_run(tg, rng, co2)
+        load = np.full(tg.n, g.capacity_pu * 0.5)
+        result = dispatch_year([g], load)
+        assert (result.emissions[0] == 0).all()
+
+    def test_positive_emissions_for_fossil(self, tg, co2):
+        """A dispatched gas generator with emission_factor>0 must produce positive
+        emissions wherever it has positive dispatch.
+        """
+        g = _quick_gen("gas", 60.0, vom=5.0, efficiency=0.58,
+                        emission_factor=0.20, fuel_price=35.0)
+        rng = np.random.default_rng(0)
+        g.prepare_run(tg, rng, co2)
+        load = np.full(tg.n, g.capacity_pu * 0.5)
+        result = dispatch_year([g], load)
+        dispatched_mask = result.power[0] > 0
+        assert (result.emissions[0, dispatched_mask] > 0).all()
+
+    def test_emissions_formula(self, tg, co2):
+        """Emissions must follow the formula:
+        power_pu * P_BASE * 0.25 * 1000 * emission_factor / efficiency.
+        Verified for a single generator with constant values.
+        """
+        g = _quick_gen("gas", 60.0, vom=5.0, efficiency=0.50,
+                        emission_factor=0.20, fuel_price=35.0)
+        rng = np.random.default_rng(0)
+        g.prepare_run(tg, rng, co2)
+        load = np.full(tg.n, g.capacity_pu * 0.3)
+        result = dispatch_year([g], load)
+        expected = result.power[0] * P_PEAK_GW * 0.25 * 1000 * 0.20 / 0.50
+        np.testing.assert_allclose(result.emissions[0], expected, rtol=1e-10)
+
+
 class TestSingleGenerator:
     """Verify dispatch behavior with a single generator (trivial case)."""
 
