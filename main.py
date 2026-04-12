@@ -1,6 +1,6 @@
 """Entry point for the Energy Mix Monte Carlo Simulator.
 
-Runs the full analysis pipeline in eight sequential steps:
+Runs the full analysis pipeline in nine sequential steps:
 
 1. **Base case**: Monte Carlo simulation of the current Italian mix (no nuclear,
    no coal) under the base gas price scenario.
@@ -13,7 +13,10 @@ Runs the full analysis pipeline in eight sequential steps:
 6. **Incremental sensitivity heatmaps**: shows how the marginal value of adding
    Δ% of nuclear or solar changes at different base penetration levels. Captures
    non-linearity and price cannibalisation effects.
-7. **Dispatch day plots**: single-day merit-order stack visualizations showing
+7. **Fuel price sensitivity**: sweeps gas and coal fuel prices independently
+   (1D) and jointly (2D heatmap) to assess electricity price exposure to
+   fuel cost shocks. Also computes sensitivity coefficients.
+8. **Dispatch day plots**: single-day merit-order stack visualizations showing
    which generators run at each quarter-hour, for summer/winter with and
    without nuclear.
 
@@ -34,19 +37,21 @@ from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import CarbonPriceModel, build_generators
 from energy_sim.simulation import (
     run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
-    build_incremental_heatmap,
+    build_incremental_heatmap, sweep_fuel_price, sweep_fuel_prices_2d,
 )
 from energy_sim.visualization import (
     plot_heatmap, plot_sensitivity_curve, plot_monthly_heatmap,
     plot_incremental_heatmap, plot_dispatch_day,
     plot_carbon_intensity_curve, plot_emissions_breakdown,
+    plot_fuel_price_sensitivity, plot_fuel_sensitivity_coefficient,
+    plot_fuel_price_heatmap_2d,
 )
 
 
 def main() -> None:
     """Run the full simulation and visualization pipeline.
 
-    Executes all seven analysis steps sequentially, printing progress and
+    Executes all nine analysis steps sequentially, printing progress and
     key results to stdout. Each step is timed independently.
     """
     # Create the output directory if it doesn't exist. All generated PNGs
@@ -70,7 +75,7 @@ def main() -> None:
     # Result: avg_price is the mean annual electricity price across runs
     # (EUR/MWh), avg_inertia is the mean system inertia constant (seconds).
     # These serve as the reference point for all sensitivity analyses.
-    print("\n[1/8] Running base case (Italian mix, no nuclear, gas base)...")
+    print("\n[1/9] Running base case (Italian mix, no nuclear, gas base)...")
     t0 = time.time()
     base_mc = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=30)
     print(f"  Base price: {base_mc['avg_price'].mean():.2f} "
@@ -96,7 +101,7 @@ def main() -> None:
     # reducing the marginal price. The inertia also improves since nuclear
     # is synchronous (H=6s). Curtailment should stay low because nuclear
     # is must-run (CF=0.9) but has high min_stable_pct.
-    print("\n[2/8] Nuclear penetration sweep (base gas scenario)...")
+    print("\n[2/9] Nuclear penetration sweep (base gas scenario)...")
     t0 = time.time()
     nuc_pcts = np.array([0, 5, 10, 15, 20, 25, 30])
     nuc_results = sweep_technology(ITALIAN_MIX, 'nuclear', nuc_pcts,
@@ -121,7 +126,7 @@ def main() -> None:
     # Output: nuclear_gas_heatmap.png — shows how the value of nuclear
     # increases with gas price: at mu=35 the price reduction is modest,
     # but at mu=90 (crisis) nuclear dramatically lowers system cost.
-    print("\n[3/8] Nuclear \u00d7 Gas price heatmap...")
+    print("\n[3/9] Nuclear \u00d7 Gas price heatmap...")
     t0 = time.time()
     price_mat, inertia_mat, gas_labels = build_sensitivity_heatmap(
         ITALIAN_MIX, 'nuclear', GAS_SCENARIOS, nuc_pcts, n_runs=20)
@@ -141,7 +146,7 @@ def main() -> None:
     # - Price reduction is strongest in summer midday, minimal at night
     #
     # Output: solar_sensitivity.png and solar_monthly.png
-    print("\n[4/8] Solar penetration sweep...")
+    print("\n[4/9] Solar penetration sweep...")
     t0 = time.time()
     sol_pcts = np.array([0, 10, 20, 30, 40, 50])
     sol_results = sweep_technology(ITALIAN_MIX, 'solar', sol_pcts,
@@ -166,7 +171,7 @@ def main() -> None:
     # - Price impact: coal may lower price if its SRMC < gas SRMC
     # - Emissions: adding coal dramatically increases system CO₂
     # - Inertia: coal is synchronous (H=5s), improving grid stability
-    print("\n[5/8] Coal penetration sweep...")
+    print("\n[5/9] Coal penetration sweep...")
     t0 = time.time()
     coal_pcts = np.array([0, 5, 10, 15, 20, 25, 30])
     coal_results = sweep_technology(ITALIAN_MIX, 'coal', coal_pcts,
@@ -193,7 +198,7 @@ def main() -> None:
     #
     # The function collects all unique penetration levels, runs a single
     # sweep_technology() call, then assembles finite differences.
-    print("\n[6/8] Incremental sensitivity heatmaps...")
+    print("\n[6/9] Incremental sensitivity heatmaps...")
     t0 = time.time()
 
     inc_base_pcts = np.array([0, 5, 10, 15, 20, 25])
@@ -212,12 +217,73 @@ def main() -> None:
                              os.path.join(out_dir, 'solar_incremental.png'))
     print(f"  Time: {time.time() - t0:.1f}s")
 
-    # ── Step 7: Dispatch day plots ────────────────────────────────────
+    # ── Step 7: Fuel price sensitivity analysis ──────────────────────
+    # Sweep gas and coal fuel prices independently to measure the
+    # electricity price exposure to fuel cost shocks. Then sweep both
+    # jointly in a 2D grid to visualize fuel-switching dynamics.
+    #
+    # Uses a mix with coal (15 GW) to make the 2D analysis meaningful.
+    # Without coal in the mix, the coal price sweep has no effect.
+    #
+    # Three plot types:
+    # - 1D curve: electricity price ± σ vs fuel μ
+    # - Sensitivity coefficient: ∂(elec_price)/∂(fuel_price)
+    # - 2D heatmap: electricity price vs (gas μ, coal μ)
+    print("\n[7/9] Fuel price sensitivity analysis...")
+    t0 = time.time()
+
+    # Mix with coal for fuel price analysis
+    mix_fuel = deepcopy(ITALIAN_MIX)
+    mix_fuel['coal']['capacity_gw'] = 15.0
+
+    # 1D gas price sweep (with coal in mix)
+    gas_mu_range = np.array([20, 30, 40, 50, 60, 70, 80, 90, 100])
+    print("  Gas price sweep:")
+    gas_results = sweep_fuel_price(
+        mix_fuel, 'gas', gas_mu_range,
+        GAS_SCENARIOS['base'], COAL_SCENARIOS['base'],
+        n_runs=20)
+    plot_fuel_price_sensitivity(
+        gas_results, 'Gas',
+        os.path.join(out_dir, 'fuel_sensitivity_gas.png'))
+    plot_fuel_sensitivity_coefficient(
+        gas_results, 'Gas',
+        os.path.join(out_dir, 'fuel_sensitivity_coeff_gas.png'))
+
+    # 1D coal price sweep (with coal in mix)
+    coal_mu_range = np.array([8, 12, 16, 20, 24, 28])
+    print("  Coal price sweep:")
+    coal_fuel_results = sweep_fuel_price(
+        mix_fuel, 'coal', coal_mu_range,
+        GAS_SCENARIOS['base'], COAL_SCENARIOS['base'],
+        n_runs=20)
+    plot_fuel_price_sensitivity(
+        coal_fuel_results, 'Coal',
+        os.path.join(out_dir, 'fuel_sensitivity_coal.png'))
+    plot_fuel_sensitivity_coefficient(
+        coal_fuel_results, 'Coal',
+        os.path.join(out_dir, 'fuel_sensitivity_coeff_coal.png'))
+
+    # 2D gas × coal price heatmap
+    gas_mu_2d = np.array([25, 40, 55, 70, 90])
+    coal_mu_2d = np.array([8, 14, 20, 26])
+    print("  2D gas × coal price sweep:")
+    price_2d, ci_2d = sweep_fuel_prices_2d(
+        mix_fuel, gas_mu_2d, coal_mu_2d,
+        GAS_SCENARIOS['base'], COAL_SCENARIOS['base'],
+        n_runs=15)
+    plot_fuel_price_heatmap_2d(
+        price_2d, gas_mu_2d, coal_mu_2d,
+        os.path.join(out_dir, 'fuel_price_heatmap_2d.png'))
+
+    print(f"  Time: {time.time() - t0:.1f}s")
+
+    # ── Step 8: Dispatch day plots ────────────────────────────────────
     # Generate single-day merit-order stack area charts showing how each
     # generator is dispatched across 96 quarter-hours. These give an
     # intuitive picture of the dispatch dynamics that aggregate statistics
     # (steps 1-4) cannot capture.
-    print("\n[7/8] Dispatch day plots...")
+    print("\n[8/9] Dispatch day plots...")
 
     # Set up the temporal grid, load profile (with 2% noise), and a
     # fixed RNG seed so the plots are reproducible across runs.

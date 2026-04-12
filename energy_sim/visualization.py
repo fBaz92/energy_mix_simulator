@@ -304,6 +304,133 @@ def plot_emissions_breakdown(results_list: list[dict], tech_name: str,
     print(f"Saved: {out_path}")
 
 
+def plot_fuel_price_sensitivity(results_list: list[dict], fuel_name: str,
+                                out_path: str) -> None:
+    """Plot electricity price and carbon intensity vs fuel mean price.
+
+    Dual-axis line plot: left axis shows mean electricity price with ±1σ band,
+    right axis shows mean carbon intensity (gCO₂/kWh).
+
+    Args:
+        results_list: List of dicts from
+            :func:`~energy_sim.simulation.sweep_fuel_price`, each with keys
+            ``'fuel_mu'``, ``'mean_price'``, ``'std_price'``,
+            ``'mean_carbon_intensity'``.
+        fuel_name: Fuel name for labels and title (e.g. ``'Gas'``, ``'Coal'``).
+        out_path: File path to save the figure (PNG).
+    """
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+    mus = [r['fuel_mu'] for r in results_list]
+    means = [r['mean_price'] for r in results_list]
+    stds = [r['std_price'] for r in results_list]
+    ci = [r['mean_carbon_intensity'] for r in results_list]
+
+    ax1.fill_between(mus,
+                     np.array(means) - np.array(stds),
+                     np.array(means) + np.array(stds),
+                     alpha=0.3, color='steelblue')
+    ax1.plot(mus, means, 'o-', color='steelblue', label='Elec. price ± σ')
+    ax1.set_xlabel(f'{fuel_name} fuel price μ (EUR/MWh_th)')
+    ax1.set_ylabel('Electricity price (EUR/MWh)', color='steelblue')
+    ax1.tick_params(axis='y', labelcolor='steelblue')
+
+    ax2 = ax1.twinx()
+    ax2.plot(mus, ci, 's--', color='darkgreen', label='Carbon intensity')
+    ax2.set_ylabel('Carbon intensity (gCO₂/kWh)', color='darkgreen')
+    ax2.tick_params(axis='y', labelcolor='darkgreen')
+
+    ax1.set_title(f'Electricity price sensitivity to {fuel_name} fuel price\n'
+                  f'(fixed mix, Monte Carlo)')
+    fig.legend(loc='upper left', bbox_to_anchor=(0.12, 0.88))
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_fuel_sensitivity_coefficient(results_list: list[dict], fuel_name: str,
+                                      out_path: str) -> None:
+    """Plot the sensitivity coefficient ∂(elec_price)/∂(fuel_price) vs fuel μ.
+
+    Uses central finite differences to approximate the derivative at each
+    operating point. Higher values indicate greater exposure to fuel price
+    shocks.
+
+    Args:
+        results_list: List of dicts from
+            :func:`~energy_sim.simulation.sweep_fuel_price` (must have ≥2
+            points), each with keys ``'fuel_mu'`` and ``'mean_price'``.
+        fuel_name: Fuel name for labels and title.
+        out_path: File path to save the figure (PNG).
+    """
+    mus = np.array([r['fuel_mu'] for r in results_list])
+    prices = np.array([r['mean_price'] for r in results_list])
+
+    # Central differences (forward/backward at endpoints)
+    coeffs = np.gradient(prices, mus)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(mus, coeffs, 'o-', color='crimson', linewidth=2)
+    ax.axhline(y=0, color='grey', linestyle=':', alpha=0.5)
+    ax.set_xlabel(f'{fuel_name} fuel price μ (EUR/MWh_th)')
+    ax.set_ylabel('∂(elec. price) / ∂(fuel price)')
+    ax.set_title(f'Fuel price sensitivity coefficient — {fuel_name}\n'
+                 f'(higher = more exposed to price shocks)')
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_fuel_price_heatmap_2d(price_matrix: np.ndarray,
+                               gas_mu_range: np.ndarray,
+                               coal_mu_range: np.ndarray,
+                               out_path: str) -> None:
+    """Plot a 2D heatmap of electricity price vs (gas μ, coal μ).
+
+    Rows are gas mean prices, columns are coal mean prices. Cell annotations
+    show the electricity price. Reveals fuel-switching dynamics: at high gas
+    prices the system dispatches more coal (and vice versa).
+
+    Args:
+        price_matrix: Mean electricity price matrix of shape
+            ``(len(gas_mu_range), len(coal_mu_range))`` in EUR/MWh.
+        gas_mu_range: Array of gas mean prices (EUR/MWh_th).
+        coal_mu_range: Array of coal mean prices (EUR/MWh_th).
+        out_path: File path to save the figure (PNG).
+    """
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    im = ax.imshow(price_matrix, aspect='auto', cmap='YlOrRd',
+                   origin='lower',
+                   extent=[coal_mu_range[0], coal_mu_range[-1],
+                           gas_mu_range[0], gas_mu_range[-1]])
+
+    ax.set_xlabel('Coal fuel price μ (EUR/MWh_th)')
+    ax.set_ylabel('Gas fuel price μ (EUR/MWh_th)')
+    ax.set_title('Electricity price vs fuel prices\n'
+                 '(fixed mix, Monte Carlo)')
+
+    # Annotate cells
+    for i in range(len(gas_mu_range)):
+        for j in range(len(coal_mu_range)):
+            val = price_matrix[i, j]
+            # Map indices to data coordinates
+            x = coal_mu_range[j]
+            y = gas_mu_range[i]
+            ax.text(x, y, f'{val:.0f}',
+                    ha='center', va='center', fontsize=8,
+                    color='white' if val > price_matrix.mean() else 'black')
+
+    plt.colorbar(im, ax=ax, label='Electricity price (EUR/MWh)')
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
 def plot_dispatch_day(generators: list[Generator], time_grid: TimeGrid,
                       load: np.ndarray, day_of_year: int,
                       out_path: str, title_extra: str = "") -> None:

@@ -81,7 +81,7 @@ python -m pytest tests/ -v              # all tests (~2s)
 python -m pytest tests/ -v -m "not slow" # skip slow MC sweeps
 ```
 
-83 tests covering config, models, generators, dispatch, and simulation. Tests marked `@pytest.mark.slow` involve multiple MC sweep runs.
+119 tests covering config, models, generators, dispatch, and simulation. Tests marked `@pytest.mark.slow` involve multiple MC sweep runs.
 
 ## Performance Notes
 
@@ -150,7 +150,7 @@ Note: with high CO₂ prices (>60 EUR/ton), coal SRMC can exceed gas SRMC ("fuel
 `CarbonPriceModel` already has the same interface as `FuelPriceModel`. Replace the `generate_path()` implementation with an O-U process. Suggested parameters: μ=65, σ=10, θ=0.05 (slower mean-reversion than gas). This interacts with coal vs gas merit-order positioning: a volatile CO₂ price creates timesteps where coal is cheaper than gas and vice versa, producing realistic fuel-switching behavior.
 
 ### 4. Fuel Price Sensitivity Analysis
-**Status**: not started
+**Status**: implemented
 **Priority**: high — critical for energy security assessment
 **Depends on**: items 1–3 (needs coal in the mix and CO₂ tracking to show fuel-switching and emission impacts)
 

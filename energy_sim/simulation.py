@@ -359,3 +359,147 @@ def build_incremental_heatmap(
             marginal_cost_matrix[i, j] = (p_target - p_base) / delta
 
     return delta_price_matrix, marginal_cost_matrix
+
+
+def sweep_fuel_price(base_mix: dict, fuel_type: str,
+                     mu_range: np.ndarray,
+                     base_gas_scenario: dict,
+                     base_coal_scenario: dict | None = None,
+                     co2_scenario: dict | None = None,
+                     n_runs: int = 20,
+                     seed: int = RANDOM_SEED) -> list[dict]:
+    """Sweep a single fuel's mean price (μ) and collect electricity price and
+    emission statistics, keeping the energy mix fixed.
+
+    For each μ value in ``mu_range``, builds the corresponding fuel scenario
+    (preserving σ and θ from the base scenario) and runs a full Monte Carlo
+    simulation. This answers the question: "given this mix, how exposed is the
+    electricity price to changes in fuel cost?"
+
+    Args:
+        base_mix: Generation mix dictionary (fixed across the sweep).
+        fuel_type: Which fuel to sweep. Must be ``'gas'`` or ``'coal'``.
+        mu_range: Array of long-run mean fuel prices (EUR/MWh_th) to test.
+        base_gas_scenario: Base gas price scenario parameters.
+        base_coal_scenario: Base coal price scenario parameters. If ``None``,
+            defaults to ``COAL_SCENARIOS['base']``.
+        co2_scenario: CO2 price scenario parameters. If ``None``, defaults
+            to ``CO2_SCENARIOS['base']``.
+        n_runs: Number of MC runs per data point. Defaults to 20.
+        seed: Base random seed. Defaults to ``RANDOM_SEED``.
+
+    Returns:
+        list[dict]: One dict per μ value with keys:
+
+            - ``'fuel_mu'`` (float): Fuel mean price tested (EUR/MWh_th).
+            - ``'mean_price'`` (float): Mean electricity price (EUR/MWh).
+            - ``'std_price'`` (float): Std dev of annual price across MC runs.
+            - ``'mean_emissions'`` (float): Mean total annual CO₂ (tons).
+            - ``'mean_carbon_intensity'`` (float): Mean CI (gCO₂/kWh).
+            - ``'mean_emissions_by_tech'`` (dict[str, float]): Per-technology
+              mean annual emissions (tons).
+
+    Raises:
+        ValueError: If ``fuel_type`` is not ``'gas'`` or ``'coal'``.
+    """
+    if fuel_type not in ('gas', 'coal'):
+        raise ValueError(f"fuel_type must be 'gas' or 'coal', got '{fuel_type}'")
+
+    coal_params = base_coal_scenario or COAL_SCENARIOS['base']
+
+    # Determine base scenario for the swept fuel (to preserve sigma/theta)
+    if fuel_type == 'gas':
+        base_fuel = base_gas_scenario
+    else:
+        base_fuel = coal_params
+
+    results = []
+    for mu in mu_range:
+        # Build the swept scenario with the new mu
+        swept = {'mu': float(mu), 'sigma': base_fuel['sigma'],
+                 'theta': base_fuel['theta']}
+
+        if fuel_type == 'gas':
+            gas_sc = swept
+            coal_sc = coal_params
+        else:
+            gas_sc = base_gas_scenario
+            coal_sc = swept
+
+        mc = run_monte_carlo(base_mix, gas_sc, coal_sc,
+                             co2_scenario=co2_scenario,
+                             n_runs=n_runs, seed=seed)
+        mean_ebt = {k: v.mean() for k, v in mc['emissions_by_tech'].items()}
+        results.append({
+            'fuel_mu': float(mu),
+            'mean_price': mc['avg_price'].mean(),
+            'std_price': mc['avg_price'].std(),
+            'mean_emissions': mc['total_emissions'].mean(),
+            'mean_carbon_intensity': mc['carbon_intensity'].mean(),
+            'mean_emissions_by_tech': mean_ebt,
+        })
+        print(f"  {fuel_type} μ={mu:.0f}: elec_price={results[-1]['mean_price']:.2f} EUR/MWh, "
+              f"CI={results[-1]['mean_carbon_intensity']:.0f} gCO₂/kWh")
+
+    return results
+
+
+def sweep_fuel_prices_2d(base_mix: dict,
+                         gas_mu_range: np.ndarray,
+                         coal_mu_range: np.ndarray,
+                         base_gas_scenario: dict,
+                         base_coal_scenario: dict | None = None,
+                         co2_scenario: dict | None = None,
+                         n_runs: int = 20,
+                         seed: int = RANDOM_SEED) -> tuple[np.ndarray, np.ndarray]:
+    """Sweep gas and coal mean prices simultaneously and collect electricity
+    price and carbon intensity in 2D grids.
+
+    For each (gas_μ, coal_μ) combination, runs a Monte Carlo simulation with
+    the energy mix fixed. Produces heatmaps that reveal fuel-switching dynamics:
+    regions where coal is cheaper than gas vs. vice versa.
+
+    Args:
+        base_mix: Generation mix dictionary (fixed across the sweep).
+        gas_mu_range: Array of gas mean prices (EUR/MWh_th) to test.
+        coal_mu_range: Array of coal mean prices (EUR/MWh_th) to test.
+        base_gas_scenario: Base gas price scenario (used for σ, θ).
+        base_coal_scenario: Base coal price scenario (used for σ, θ).
+            If ``None``, defaults to ``COAL_SCENARIOS['base']``.
+        co2_scenario: CO2 price scenario parameters. If ``None``, defaults
+            to ``CO2_SCENARIOS['base']``.
+        n_runs: Number of MC runs per data point. Defaults to 20.
+        seed: Base random seed. Defaults to ``RANDOM_SEED``.
+
+    Returns:
+        tuple: A 2-tuple of:
+
+            - **price_matrix** (np.ndarray): Shape
+              ``(len(gas_mu_range), len(coal_mu_range))``, mean electricity
+              price in EUR/MWh. Rows = gas μ, columns = coal μ.
+            - **ci_matrix** (np.ndarray): Same shape, mean carbon intensity
+              in gCO₂/kWh.
+    """
+    coal_params = base_coal_scenario or COAL_SCENARIOS['base']
+    n_gas = len(gas_mu_range)
+    n_coal = len(coal_mu_range)
+    price_matrix = np.zeros((n_gas, n_coal))
+    ci_matrix = np.zeros((n_gas, n_coal))
+
+    for i, gas_mu in enumerate(gas_mu_range):
+        gas_sc = {'mu': float(gas_mu), 'sigma': base_gas_scenario['sigma'],
+                  'theta': base_gas_scenario['theta']}
+        for j, coal_mu in enumerate(coal_mu_range):
+            coal_sc = {'mu': float(coal_mu), 'sigma': coal_params['sigma'],
+                       'theta': coal_params['theta']}
+
+            mc = run_monte_carlo(base_mix, gas_sc, coal_sc,
+                                 co2_scenario=co2_scenario,
+                                 n_runs=n_runs, seed=seed)
+            price_matrix[i, j] = mc['avg_price'].mean()
+            ci_matrix[i, j] = mc['carbon_intensity'].mean()
+            print(f"  gas_μ={gas_mu:.0f}, coal_μ={coal_mu:.0f}: "
+                  f"price={price_matrix[i, j]:.2f} EUR/MWh, "
+                  f"CI={ci_matrix[i, j]:.0f} gCO₂/kWh")
+
+    return price_matrix, ci_matrix

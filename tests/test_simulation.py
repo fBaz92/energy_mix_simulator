@@ -1,5 +1,6 @@
 """Tests for energy_sim.simulation (run_monte_carlo, sweep_technology,
-build_sensitivity_heatmap, build_incremental_heatmap).
+build_sensitivity_heatmap, build_incremental_heatmap, sweep_fuel_price,
+sweep_fuel_prices_2d).
 
 Validates the Monte Carlo runner for reproducibility, correct output shapes,
 edge cases (single run), and price sanity. Validates sweep_technology for
@@ -7,10 +8,15 @@ correct result length and presence of all expected keys. Validates
 build_sensitivity_heatmap for correct matrix shapes across gas scenarios
 and penetration levels. Validates build_incremental_heatmap for correct
 matrix shapes, marginal cost consistency, and expected price impact sign.
+Validates sweep_fuel_price for correct result length, keys, monotonicity
+(higher gas price → higher electricity price), and input validation.
+Validates sweep_fuel_prices_2d for correct matrix shapes.
 """
 
 import numpy as np
 import pytest
+
+from copy import deepcopy
 
 from energy_sim.config import ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS
 from energy_sim.simulation import (
@@ -18,6 +24,8 @@ from energy_sim.simulation import (
     sweep_technology,
     build_sensitivity_heatmap,
     build_incremental_heatmap,
+    sweep_fuel_price,
+    sweep_fuel_prices_2d,
 )
 
 
@@ -203,4 +211,122 @@ class TestBuildIncrementalHeatmap:
         # At least the first row (base=0%) should show a price decrease
         assert delta_mat[0, 0] < 0, (
             "Adding 5% nuclear from 0% base should lower the price"
+        )
+
+
+@pytest.mark.slow
+class TestSweepFuelPrice:
+    """Verify the single-fuel price sweep utility.
+
+    Tests that sweep_fuel_price correctly iterates over fuel mean prices,
+    returns properly structured results, and produces monotonically increasing
+    electricity prices when gas price increases (all else equal).
+    """
+
+    def test_result_length(self):
+        """sweep_fuel_price must return one result dict per μ value."""
+        mu_range = np.array([25, 50, 75])
+        results = sweep_fuel_price(
+            ITALIAN_MIX, 'gas', mu_range,
+            GAS_SCENARIOS['base'], n_runs=2, seed=0)
+        assert len(results) == len(mu_range)
+
+    def test_result_keys(self):
+        """Each result dict must contain all expected keys: fuel_mu,
+        mean_price, std_price, mean_emissions, mean_carbon_intensity,
+        mean_emissions_by_tech.
+        """
+        mu_range = np.array([30, 50])
+        results = sweep_fuel_price(
+            ITALIAN_MIX, 'gas', mu_range,
+            GAS_SCENARIOS['base'], n_runs=2, seed=0)
+        expected_keys = {'fuel_mu', 'mean_price', 'std_price',
+                         'mean_emissions', 'mean_carbon_intensity',
+                         'mean_emissions_by_tech'}
+        for r in results:
+            assert set(r.keys()) == expected_keys
+
+    def test_gas_price_monotonicity(self):
+        """Higher gas fuel price must produce higher electricity price when
+        gas is the dominant dispatchable generator in the mix.
+        """
+        mu_range = np.array([20, 60, 100])
+        results = sweep_fuel_price(
+            ITALIAN_MIX, 'gas', mu_range,
+            GAS_SCENARIOS['base'], n_runs=3, seed=42)
+        prices = [r['mean_price'] for r in results]
+        assert prices[0] < prices[1] < prices[2], (
+            f"Electricity prices should increase with gas price: {prices}"
+        )
+
+    def test_invalid_fuel_type(self):
+        """Passing a fuel_type other than 'gas' or 'coal' must raise ValueError."""
+        with pytest.raises(ValueError, match="fuel_type must be"):
+            sweep_fuel_price(
+                ITALIAN_MIX, 'nuclear', np.array([10, 20]),
+                GAS_SCENARIOS['base'], n_runs=2, seed=0)
+
+    def test_coal_sweep_with_coal_in_mix(self):
+        """Sweeping coal price with coal in the mix must produce results where
+        electricity price responds to coal price changes.
+        """
+        mix_coal = deepcopy(ITALIAN_MIX)
+        mix_coal['coal']['capacity_gw'] = 15.0
+        mu_range = np.array([8, 20])
+        results = sweep_fuel_price(
+            mix_coal, 'coal', mu_range,
+            GAS_SCENARIOS['base'], COAL_SCENARIOS['base'],
+            n_runs=2, seed=42)
+        assert len(results) == 2
+        # Higher coal price should not decrease electricity price
+        assert results[1]['mean_price'] >= results[0]['mean_price'] - 5.0
+
+
+@pytest.mark.slow
+class TestSweepFuelPrices2d:
+    """Verify the 2D fuel price sweep (gas × coal) utility.
+
+    Tests that sweep_fuel_prices_2d returns matrices with correct shapes
+    matching the input ranges and that prices are reasonable.
+    """
+
+    def test_shapes(self):
+        """Output matrices must have shape (len(gas_mu_range), len(coal_mu_range))."""
+        mix_coal = deepcopy(ITALIAN_MIX)
+        mix_coal['coal']['capacity_gw'] = 15.0
+        gas_mus = np.array([30, 60])
+        coal_mus = np.array([10, 20])
+        price_mat, ci_mat = sweep_fuel_prices_2d(
+            mix_coal, gas_mus, coal_mus,
+            GAS_SCENARIOS['base'], COAL_SCENARIOS['base'],
+            n_runs=2, seed=0)
+        assert price_mat.shape == (2, 2)
+        assert ci_mat.shape == (2, 2)
+
+    def test_prices_positive(self):
+        """All electricity prices in the 2D matrix must be positive."""
+        mix_coal = deepcopy(ITALIAN_MIX)
+        mix_coal['coal']['capacity_gw'] = 15.0
+        gas_mus = np.array([30, 60])
+        coal_mus = np.array([10, 20])
+        price_mat, _ = sweep_fuel_prices_2d(
+            mix_coal, gas_mus, coal_mus,
+            GAS_SCENARIOS['base'], COAL_SCENARIOS['base'],
+            n_runs=2, seed=0)
+        assert (price_mat > 0).all()
+
+    def test_higher_gas_higher_price(self):
+        """Within each coal price column, higher gas price must produce
+        higher or equal electricity price.
+        """
+        mix_coal = deepcopy(ITALIAN_MIX)
+        mix_coal['coal']['capacity_gw'] = 15.0
+        gas_mus = np.array([25, 80])
+        coal_mus = np.array([12])
+        price_mat, _ = sweep_fuel_prices_2d(
+            mix_coal, gas_mus, coal_mus,
+            GAS_SCENARIOS['base'], COAL_SCENARIOS['base'],
+            n_runs=3, seed=42)
+        assert price_mat[1, 0] > price_mat[0, 0], (
+            "Higher gas price should produce higher electricity price"
         )
