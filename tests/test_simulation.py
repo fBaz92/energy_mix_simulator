@@ -1,6 +1,6 @@
-"""Tests for energy_sim.simulation (run_monte_carlo, sweep_technology,
-build_sensitivity_heatmap, build_incremental_heatmap, sweep_fuel_price,
-sweep_fuel_prices_2d).
+"""Tests for energy_sim.simulation (run_monte_carlo with load profile
+enhancements, sweep_technology, build_sensitivity_heatmap,
+build_incremental_heatmap, sweep_fuel_price, sweep_fuel_prices_2d).
 
 Validates the Monte Carlo runner for reproducibility, correct output shapes,
 edge cases (single run), and price sanity. Validates sweep_technology for
@@ -125,6 +125,36 @@ class TestRunMonteCarlo:
                             COAL_SCENARIOS['base'], n_runs=2, seed=42)
         assert 'coal' in r['emissions_by_tech']
         assert r['emissions_by_tech']['coal'].mean() > 0
+
+    def test_weekday_holiday_active_by_default(self):
+        """With default settings, weekday/holiday modulation should produce
+        lower average load than without them. We verify by comparing runs
+        with and without the enhancements.
+        """
+        r_with = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'],
+                                 n_runs=2, seed=42)
+        r_without = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'],
+                                    n_runs=2, seed=42,
+                                    weekday_factors=None,
+                                    holiday_factor=None,
+                                    holiday_calendar=None)
+        # Weekday/holiday reduce load → lower prices on average
+        assert r_with['avg_price'].mean() <= r_without['avg_price'].mean(), (
+            "Weekday/holiday load reduction should lower or maintain average price"
+        )
+
+    def test_disable_load_enhancements(self):
+        """Passing None for weekday/holiday/calendar must work without errors
+        and produce valid results (backward compatibility).
+        """
+        r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'],
+                            n_runs=1, seed=0,
+                            weekday_factors=None,
+                            holiday_factor=None,
+                            holiday_calendar=None,
+                            load_noise=0.02)
+        assert r['avg_price'].shape == (1,)
+        assert r['avg_price'][0] > 0
 
 
 @pytest.mark.slow

@@ -14,6 +14,8 @@ from energy_sim.config import (
     QUARTERS_PER_YEAR, N_MC_RUNS, RANDOM_SEED, P_PEAK_GW,
     ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, CO2_SCENARIOS,
     QUARTERS_PER_DAY,
+    WEEKDAY_LOAD_FACTORS, HOLIDAY_LOAD_FACTOR,
+    ITALIAN_HOLIDAYS_DOY, DEFAULT_LOAD_NOISE_SIGMA,
 )
 from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import CarbonPriceModel, build_generators
@@ -24,8 +26,11 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
                     coal_scenario: dict | None = None,
                     co2_scenario: dict | None = None,
                     n_runs: int = N_MC_RUNS,
-                    load_noise: float = 0.02,
-                    seed: int = RANDOM_SEED) -> dict:
+                    load_noise: float = DEFAULT_LOAD_NOISE_SIGMA,
+                    seed: int = RANDOM_SEED,
+                    weekday_factors: dict[int, float] | None = WEEKDAY_LOAD_FACTORS,
+                    holiday_factor: float | None = HOLIDAY_LOAD_FACTOR,
+                    holiday_calendar: list[int] | None = ITALIAN_HOLIDAYS_DOY) -> dict:
     """Run a Monte Carlo simulation of the electricity market.
 
     For each run: builds fresh generators (new stochastic fuel price paths),
@@ -43,9 +48,18 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
             ``theta``). If ``None``, defaults to ``CO2_SCENARIOS['base']``.
         n_runs: Number of Monte Carlo runs. Defaults to ``N_MC_RUNS``.
         load_noise: Standard deviation of multiplicative Gaussian load noise.
-            Defaults to 0.02 (2%).
+            Defaults to ``DEFAULT_LOAD_NOISE_SIGMA`` (0.04).
         seed: Base random seed. Run *i* uses ``seed + i``.
             Defaults to ``RANDOM_SEED``.
+        weekday_factors: Day-of-week load multipliers (0=Monday, 6=Sunday).
+            Defaults to ``WEEKDAY_LOAD_FACTORS`` (reduced weekend demand).
+            Pass ``None`` to disable weekday modulation.
+        holiday_factor: Load multiplier for public holidays, applied on top
+            of weekday factors. Defaults to ``HOLIDAY_LOAD_FACTOR`` (0.80).
+            Pass ``None`` to disable holiday modulation.
+        holiday_calendar: List of day-of-year indices (0-364) for public
+            holidays. Defaults to ``ITALIAN_HOLIDAYS_DOY``.
+            Pass ``None`` to disable holiday modulation.
 
     Returns:
         dict: Aggregated results with keys:
@@ -66,7 +80,15 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
               annual emissions, each shape ``(n_runs,)``, in tons.
     """
     tg = TimeGrid()
+    if holiday_calendar is not None:
+        tg.set_holiday_calendar(holiday_calendar)
+
     lp = LoadProfile(tg)
+    if weekday_factors is not None:
+        lp.set_weekday_factors(weekday_factors)
+    if holiday_factor is not None and holiday_calendar is not None:
+        lp.set_holiday_factor(holiday_factor)
+
     co2_params = co2_scenario or CO2_SCENARIOS['base']
     co2 = CarbonPriceModel(**co2_params)
 

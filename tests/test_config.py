@@ -19,6 +19,10 @@ from energy_sim.config import (
     ITALIAN_MIX,
     COAL_SCENARIOS,
     CO2_SCENARIOS,
+    WEEKDAY_LOAD_FACTORS,
+    HOLIDAY_LOAD_FACTOR,
+    ITALIAN_HOLIDAYS_DOY,
+    DEFAULT_LOAD_NOISE_SIGMA,
     _solar_envelope,
 )
 
@@ -95,6 +99,67 @@ class TestFactorDicts:
     def test_cloud_transition_12_months(self):
         """CLOUD_TRANSITION (Markov chain probabilities) must have entries for months 1-12."""
         assert set(CLOUD_TRANSITION.keys()) == set(range(1, 13))
+
+
+class TestWeekdayLoadFactors:
+    """Verify structure and values of the WEEKDAY_LOAD_FACTORS dictionary."""
+
+    def test_has_7_days(self):
+        """WEEKDAY_LOAD_FACTORS must have entries for days 0 (Monday) through 6 (Sunday)."""
+        assert set(WEEKDAY_LOAD_FACTORS.keys()) == set(range(7))
+
+    def test_weekdays_are_one(self):
+        """Monday through Friday must have load factor 1.0 (full working-day demand)."""
+        for d in range(5):
+            assert WEEKDAY_LOAD_FACTORS[d] == 1.0
+
+    def test_weekend_reduced(self):
+        """Saturday and Sunday must have load factors below 1.0 (reduced demand)."""
+        assert WEEKDAY_LOAD_FACTORS[5] < 1.0, "Saturday must be < 1.0"
+        assert WEEKDAY_LOAD_FACTORS[6] < 1.0, "Sunday must be < 1.0"
+
+    def test_sunday_lower_than_saturday(self):
+        """Sunday demand must be lower than Saturday (less commercial activity)."""
+        assert WEEKDAY_LOAD_FACTORS[6] < WEEKDAY_LOAD_FACTORS[5]
+
+
+class TestHolidayConfig:
+    """Verify structure and values of Italian holiday configuration."""
+
+    def test_holiday_factor_less_than_one(self):
+        """HOLIDAY_LOAD_FACTOR must be less than 1.0 (holidays reduce demand)."""
+        assert 0 < HOLIDAY_LOAD_FACTOR < 1.0
+
+    def test_holidays_within_year(self):
+        """All holiday day-of-year indices must be in valid range [0, 364]."""
+        for doy in ITALIAN_HOLIDAYS_DOY:
+            assert 0 <= doy <= 364, f"Holiday DOY {doy} out of range"
+
+    def test_holidays_unique(self):
+        """No duplicate entries in the holiday calendar."""
+        assert len(ITALIAN_HOLIDAYS_DOY) == len(set(ITALIAN_HOLIDAYS_DOY))
+
+    def test_contains_key_holidays(self):
+        """Must include New Year (0), Christmas (358), and Ferragosto (226)."""
+        assert 0 in ITALIAN_HOLIDAYS_DOY, "Missing New Year's Day"
+        assert 358 in ITALIAN_HOLIDAYS_DOY, "Missing Christmas Day"
+        assert 226 in ITALIAN_HOLIDAYS_DOY, "Missing Ferragosto"
+
+    def test_at_least_8_holidays(self):
+        """Italy has at least 8 fixed-date public holidays."""
+        assert len(ITALIAN_HOLIDAYS_DOY) >= 8
+
+
+class TestDefaultLoadNoise:
+    """Verify the default load noise sigma constant."""
+
+    def test_positive(self):
+        """DEFAULT_LOAD_NOISE_SIGMA must be positive."""
+        assert DEFAULT_LOAD_NOISE_SIGMA > 0
+
+    def test_reasonable_range(self):
+        """DEFAULT_LOAD_NOISE_SIGMA should be between 0.01 and 0.10 for realism."""
+        assert 0.01 <= DEFAULT_LOAD_NOISE_SIGMA <= 0.10
 
 
 class TestItalianMix:

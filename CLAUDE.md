@@ -81,7 +81,7 @@ python -m pytest tests/ -v              # all tests (~2s)
 python -m pytest tests/ -v -m "not slow" # skip slow MC sweeps
 ```
 
-119 tests covering config, models, generators, dispatch, and simulation. Tests marked `@pytest.mark.slow` involve multiple MC sweep runs.
+134 tests covering config, models, generators, dispatch, and simulation. Tests marked `@pytest.mark.slow` involve multiple MC sweep runs.
 
 ## Performance Notes
 
@@ -166,7 +166,7 @@ Implementation:
 - Pair with CO₂ tracking (item 1) to show how emission intensity changes with fuel price (high gas price → more coal dispatch → higher emissions).
 
 ### 5. Load Profile Enhancements
-**Status**: not started
+**Status**: implemented
 **Priority**: medium — infrastructure already exists, just needs activation
 **Depends on**: nothing (independent, but best done before interconnections which add load complexity)
 

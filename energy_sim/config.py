@@ -87,6 +87,58 @@ HOURLY_LOAD_FACTORS: dict[int, float] = {
 }
 """Hourly load factors (fraction of daily peak, 0-indexed hours)."""
 
+WEEKDAY_LOAD_FACTORS: dict[int, float] = {
+    0: 1.00,  # Monday
+    1: 1.00,  # Tuesday
+    2: 1.00,  # Wednesday
+    3: 1.00,  # Thursday
+    4: 1.00,  # Friday
+    5: 0.85,  # Saturday
+    6: 0.75,  # Sunday
+}
+"""Day-of-week load multipliers (0=Monday, 6=Sunday).
+
+Weekend demand is lower than weekday demand. Saturday sees partial commercial
+activity (0.85), Sunday is the lowest (0.75). Applied multiplicatively on top
+of monthly and hourly factors.
+"""
+
+HOLIDAY_LOAD_FACTOR: float = 0.80
+"""Load multiplier for public holidays.
+
+Applied on top of all other factors (monthly, hourly, weekday). A holiday
+falling on Sunday compounds: 0.75 * 0.80 = 0.60 of peak, which reflects
+the near-total shutdown of industrial and commercial loads.
+"""
+
+ITALIAN_HOLIDAYS_DOY: list[int] = [
+    0,    # 1 January — New Year's Day
+    5,    # 6 January — Epiphany
+    114,  # 25 April — Liberation Day
+    120,  # 1 May — Labour Day
+    152,  # 2 June — Republic Day
+    226,  # 15 August — Ferragosto
+    304,  # 1 November — All Saints' Day
+    341,  # 8 December — Immaculate Conception
+    358,  # 25 December — Christmas Day
+    359,  # 26 December — St. Stephen's Day
+]
+"""Italian public holidays as day-of-year indices (0-indexed, 0 = Jan 1).
+
+Only fixed-date holidays are included. Easter and Easter Monday are excluded
+because the simulated year is generic (no specific calendar year), and their
+floating dates would require an arbitrary choice. Their omission has negligible
+impact on annual statistics (~2 days out of 365).
+"""
+
+DEFAULT_LOAD_NOISE_SIGMA: float = 0.04
+"""Default standard deviation for multiplicative Gaussian load noise.
+
+Increased from the original 0.02 to better capture intra-day demand variability
+(weather-driven HVAC swings, random industrial load). The noise is clipped to
+[0.5, 1.5] to prevent unrealistic extremes.
+"""
+
 # ---------------------------------------------------------------------------
 # Solar profile parameters
 # ---------------------------------------------------------------------------

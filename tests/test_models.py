@@ -135,3 +135,39 @@ class TestLoadProfile:
         noisy = lp.generate(rng, noise_sigma=0.3)
         assert (noisy >= det * 0.5 - 1e-10).all()
         assert (noisy <= det * 1.5 + 1e-10).all()
+
+    def test_weekday_and_holiday_compound(self, time_grid):
+        """When a holiday falls on a Sunday (day_of_week=6), both the weekday
+        factor and holiday factor must apply multiplicatively.
+
+        Day 6 is a Sunday (since day_of_year % 7 == day_of_week, and year
+        starts on Monday, day 6 = Sunday). Setting it as holiday should
+        produce: load = base * weekday_factor[6] * holiday_factor.
+        """
+        time_grid.set_holiday_calendar([6])  # Day 6 is Sunday
+        lp = LoadProfile(time_grid)
+        base = lp.generate(noise_sigma=0.0)
+
+        lp.set_weekday_factors({0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0,
+                                4: 1.0, 5: 0.85, 6: 0.75})
+        lp.set_holiday_factor(0.80)
+        modified = lp.generate(noise_sigma=0.0)
+
+        day6_mask = time_grid.day_of_year == 6
+        # base already has monthly/hourly factors; weekday * holiday = 0.75 * 0.80
+        expected = base[day6_mask] * 0.75 * 0.80
+        np.testing.assert_allclose(modified[day6_mask], expected, rtol=1e-10)
+
+    def test_weekday_mean_load_lower_than_flat(self, time_grid):
+        """Applying weekday factors with reduced weekend demand must lower the
+        overall mean load compared to no weekday modulation.
+        """
+        lp_flat = LoadProfile(time_grid)
+        flat_load = lp_flat.generate(noise_sigma=0.0)
+
+        lp_weekday = LoadProfile(time_grid)
+        lp_weekday.set_weekday_factors({0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0,
+                                        4: 1.0, 5: 0.85, 6: 0.75})
+        weekday_load = lp_weekday.generate(noise_sigma=0.0)
+
+        assert weekday_load.mean() < flat_load.mean()
