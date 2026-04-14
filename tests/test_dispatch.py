@@ -293,3 +293,170 @@ class TestAllDispatched:
         result = dispatch_year([g1, g2, g3], load)
         for i in range(3):
             assert (result.power[i] > 0).all()
+
+
+class TestInterconnectionsInDispatch:
+    """Behavior of dispatch_year when interconnection_realizations are passed.
+
+    Validates the two integration points added for cross-border flows:
+    Phase 1 — virtual imports clear through the merit order alongside
+    domestic units; Phase 3 — export redispatch pushes headroom abroad
+    when the domestic marginal price is below the export floor. Also
+    verifies the dual emissions accounting (territorial vs consumption-based).
+    """
+
+    # A constant foreign price is enough to probe the economic logic; the
+    # stochastic price path is tested in test_interconnections.py.
+    def _make_realization(self, tg, foreign_price_eur_mwh, tau=2.0,
+                           ntc_import_gw=10.0, ntc_export_gw=10.0,
+                           ci=200.0):
+        """Build a single-link realization with constant foreign price.
+
+        Returns a 1-element list suitable to pass as
+        ``interconnection_realizations``.
+        """
+        from energy_sim.interconnections import Interconnection
+        from energy_sim.reliability import PerfectReliability
+        link = Interconnection(
+            name='IT-X', price_area_name='X',
+            ntc_import_gw=ntc_import_gw, ntc_export_gw=ntc_export_gw,
+            transport_cost_eur_mwh=tau,
+            reliability_model=PerfectReliability(),
+        )
+        foreign = np.full(tg.n, float(foreign_price_eur_mwh))
+        return [link.realize(foreign, ci, tg, np.random.default_rng(0))]
+
+    def test_import_clears_when_cheaper_than_domestic(self, tg, co2):
+        """A foreign market at 20 EUR/MWh must displace an expensive
+        domestic unit (50 EUR/MWh) up to the NTC, without triggering the
+        Phase-2 inertia fix.
+
+        A cheap domestic sync generator is included to satisfy the
+        H_MIN constraint regardless of dispatch — otherwise the lone
+        expensive unit would be forced online at min stable generation
+        just for inertia, and the expected balance would be confounded
+        by the inertia-fix pathway (a separate concern, covered elsewhere).
+        """
+        cheap_base = _quick_gen("cheap", 30.0, vom=5.0)       # H-provider
+        expensive = _quick_gen("expensive", 30.0, vom=50.0)   # displaced
+        for g in [cheap_base, expensive]:
+            g.prepare_run(tg, np.random.default_rng(0), co2)
+
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=20.0, tau=0.0, ntc_import_gw=20.0)
+        # Load 0.7 p.u. (42 GW): 30 GW from cheap_base + residual 12 GW
+        # must come from either expensive (50 €/MWh) or import (20 €/MWh).
+        # Import is cheaper → must serve the residual.
+        load = np.full(tg.n, 0.7)
+        result = dispatch_year([cheap_base, expensive], load, real)
+
+        # cheap_base fully used, expensive stays offline, import fills gap
+        residual_pu = 0.7 - cheap_base.capacity_pu
+        assert result.power[0].mean() == pytest.approx(cheap_base.capacity_pu,
+                                                        rel=1e-6)
+        assert result.power[1].mean() == pytest.approx(0.0, abs=1e-9)
+        assert result.power[-1].mean() == pytest.approx(residual_pu, rel=1e-6)
+        # Import is the marginal resource → price = 20 €/MWh
+        assert result.marginal_price.max() == pytest.approx(20.0, rel=1e-6)
+
+    def test_expensive_import_does_not_displace_domestic(self, tg, co2):
+        """An import at 100 EUR/MWh against a domestic unit at 10 EUR/MWh
+        must stay off — the merit order protects the cheaper resource.
+        """
+        cheap = _quick_gen("cheap", 60.0, vom=10.0)
+        cheap.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=100.0, tau=0.0)
+        load = np.full(tg.n, 0.5)
+        result = dispatch_year([cheap], load, real)
+        assert np.allclose(result.power[-1], 0.0)
+        assert result.marginal_price.max() == pytest.approx(10.0)
+
+    def test_export_triggers_when_floor_above_domestic(self, tg, co2):
+        """When foreign − τ > domestic marginal cost and export NTC > 0,
+        additional domestic dispatch must flow abroad.
+
+        Uses a very cheap domestic generator with large headroom so that
+        the Phase-3 redispatch has room to satisfy the export demand.
+        """
+        cheap = _quick_gen("cheap", 60.0, vom=5.0)
+        cheap.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=60.0, tau=2.0,
+            ntc_import_gw=0.0, ntc_export_gw=10.0)
+        # Very low load: 0.05 p.u. (3 GW) leaves huge headroom on cheap
+        load = np.full(tg.n, 0.05)
+        result = dispatch_year([cheap], load, real)
+        # Net import must be negative (we are exporting)
+        assert result.net_import_pu[0].mean() < -1e-6
+        # Marginal price should have risen to cheap's SRMC (since cheap was
+        # dispatched further to export)
+        assert result.marginal_price.max() >= 5.0
+
+    def test_energy_balance_holds_with_interconnections(self, tg, co2):
+        """Invariant: domestic_gen + import = load + export + curtailment +
+        unserved (to machine precision) regardless of phase-3 activity.
+
+        This is the master correctness check of the dispatch integration.
+        """
+        g_cheap = _quick_gen("c", 40.0, vom=5.0)
+        g_exp = _quick_gen("e", 30.0, vom=60.0)
+        for g in [g_cheap, g_exp]:
+            g.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=30.0, tau=2.0,
+            ntc_import_gw=6.0, ntc_export_gw=4.0)
+        load = np.full(tg.n, 0.5)
+        result = dispatch_year([g_cheap, g_exp], load, real)
+
+        n_domestic = 2
+        domestic_gen = result.power[:n_domestic, :].sum(axis=0)
+        import_power = result.power[n_domestic:, :].sum(axis=0)
+        export_power = np.maximum(
+            import_power - result.net_import_pu.sum(axis=0), 0.0)
+        residual = (domestic_gen + import_power
+                    - load - export_power
+                    - result.curtailment - result.unserved)
+        assert np.max(np.abs(residual)) < 1e-10
+
+    def test_imports_carry_no_territorial_emissions(self, tg, co2):
+        """The import row in result.emissions must be identically zero.
+
+        This is the IPCC convention: cross-border imports contribute to
+        consumption-based emissions (``emissions_imported_kg``) but NOT
+        to territorial emissions. Scenario: undersized domestic unit so
+        net import is positive and consumption-based emissions are
+        non-zero (ci=500 gCO₂/kWh).
+        """
+        # Small domestic (15 GW = 0.25 p.u.) paired with cheap import so
+        # net flow is positive import at every timestep.
+        small_dom = _quick_gen("dom", 15.0, vom=60.0, efficiency=0.5,
+                                emission_factor=0.3)
+        small_dom.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=20.0, tau=0.0,
+            ntc_import_gw=20.0, ntc_export_gw=0.0, ci=500.0)
+        # Load 0.4 p.u. (24 GW): domestic 15 GW + import 9 GW
+        load = np.full(tg.n, 0.4)
+        result = dispatch_year([small_dom], load, real)
+        # Import row is the last; its territorial emissions must be 0
+        assert np.all(result.emissions[-1] == 0.0)
+        # But consumption-based emissions must be positive (CI = 500)
+        assert result.emissions_imported_kg.sum() > 0
+
+    def test_no_realizations_is_backward_compatible(self, tg, co2):
+        """Calling dispatch_year without interconnection_realizations or
+        with an empty list must reproduce the legacy behavior exactly.
+
+        Protects existing callers that pre-date the interconnection layer.
+        """
+        g = _quick_gen("g", 30.0, vom=10.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.2)
+        r_none = dispatch_year([g], load)
+        r_empty = dispatch_year([g], load, [])
+        assert np.array_equal(r_none.power, r_empty.power)
+        assert np.array_equal(r_none.marginal_price, r_empty.marginal_price)
+        # No interconnection metadata populated
+        assert r_none.interconnection_names == []
+        assert r_none.net_import_pu.shape == (0, tg.n)
