@@ -66,6 +66,10 @@ class FuelPriceModel:
         Uses Euler-Maruyama discretization of the O-U SDE:
         ``dP = theta * (mu - P) * dt + sigma * dW``.
 
+        Shocks are drawn iid from the standard normal distribution. For
+        correlated multi-area simulations, use :meth:`generate_path_from_shocks`
+        directly with externally-supplied correlated shocks.
+
         Args:
             n_steps: Number of time steps (typically 35 040).
             rng: NumPy random generator instance.
@@ -76,12 +80,38 @@ class FuelPriceModel:
             np.ndarray: Price path of shape ``(n_steps,)`` in EUR/MWh_th,
                 floored at 1.0 EUR.
         """
+        shocks = rng.standard_normal(n_steps)
+        return self.generate_path_from_shocks(shocks, dt=dt)
+
+    def generate_path_from_shocks(self, shocks: np.ndarray,
+                                   dt: float = 0.25 / 24 / 365) -> np.ndarray:
+        """Integrate the O-U SDE driven by externally-supplied Gaussian shocks.
+
+        Decouples the stochastic source from the numerical integrator, which
+        allows the same O-U path machinery to be reused for correlated
+        multi-area simulations (see
+        :class:`~energy_sim.price_areas.PriceAreaCoupling`). The iid path
+        produced by :meth:`generate_path` is mathematically identical to a
+        call to this method with ``shocks = rng.standard_normal(n_steps)``.
+
+        Args:
+            shocks: Array of Gaussian shocks of shape ``(n_steps,)``. Must
+                be marginally standard normal. Correlation with other
+                processes (if any) lives in the cross-process covariance.
+            dt: Time step in years. Defaults to one quarter-hour
+                (0.25 / 24 / 365).
+
+        Returns:
+            np.ndarray: Price path of shape ``(n_steps,)`` in EUR/MWh_th,
+                floored at 1.0 EUR. First element is ``self.mu``.
+        """
+        n_steps = shocks.shape[0]
         prices = np.empty(n_steps)
         prices[0] = self.mu
         sqrt_dt = np.sqrt(dt)
-        noise = rng.standard_normal(n_steps)
         for t in range(1, n_steps):
-            dp = self.theta * (self.mu - prices[t - 1]) * dt + self.sigma * sqrt_dt * noise[t]
+            dp = (self.theta * (self.mu - prices[t - 1]) * dt
+                  + self.sigma * sqrt_dt * shocks[t])
             prices[t] = max(prices[t - 1] + dp, 1.0)
         return prices
 

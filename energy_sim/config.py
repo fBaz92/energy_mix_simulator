@@ -361,3 +361,175 @@ Each generator type maps to a dict with:
     ramp_rate_pct_per_min (float): Ramp rate as fraction of capacity per minute.
     startup_cost_eur_mw (float): Start-up cost in EUR per MW.
 """
+
+# ---------------------------------------------------------------------------
+# Price areas (neighbouring electricity markets)
+# ---------------------------------------------------------------------------
+PRICE_AREAS: dict[str, dict] = {
+    'FR': {
+        'mu': 45.0, 'sigma': 15.0, 'theta': 0.05,
+        'carbon_intensity_g_per_kwh': 50.0,
+    },
+    'CH': {
+        'mu': 50.0, 'sigma': 12.0, 'theta': 0.05,
+        'carbon_intensity_g_per_kwh': 30.0,
+    },
+    'AT': {
+        'mu': 55.0, 'sigma': 18.0, 'theta': 0.05,
+        'carbon_intensity_g_per_kwh': 180.0,
+    },
+    'SI': {
+        'mu': 58.0, 'sigma': 16.0, 'theta': 0.05,
+        'carbon_intensity_g_per_kwh': 220.0,
+    },
+    'GR': {
+        'mu': 70.0, 'sigma': 22.0, 'theta': 0.05,
+        'carbon_intensity_g_per_kwh': 430.0,
+    },
+}
+"""External electricity price areas (neighbouring markets).
+
+Each area is an independent exogenous market modelled as an Ornstein-Uhlenbeck
+stochastic process. Areas are linked to the domestic system by one or more
+:class:`~energy_sim.interconnections.Interconnection` objects.
+
+Values are annual averages roughly consistent with 2022-2023 day-ahead
+observations and ENTSO-E carbon intensity data. The ``carbon_intensity_g_per_kwh``
+is used for consumption-based emission accounting (emissions embedded in imports).
+
+Keys:
+    mu (float): Long-run mean day-ahead price (EUR/MWh).
+    sigma (float): Volatility of the O-U process.
+    theta (float): Mean-reversion speed.
+    carbon_intensity_g_per_kwh (float): Average emission intensity of the
+        neighbour's generation mix (gCO₂/kWh).
+"""
+
+PRICE_AREA_CORRELATIONS: dict[tuple[str, str], float] = {
+    ('FR', 'CH'): 0.80,
+    ('FR', 'AT'): 0.65,
+    ('FR', 'SI'): 0.55,
+    ('FR', 'GR'): 0.30,
+    ('CH', 'AT'): 0.75,
+    ('CH', 'SI'): 0.60,
+    ('CH', 'GR'): 0.30,
+    ('AT', 'SI'): 0.70,
+    ('AT', 'GR'): 0.40,
+    ('SI', 'GR'): 0.45,
+}
+"""Pairwise correlations between price areas (O-U shock correlations).
+
+Only unordered pairs need to be specified; symmetry is enforced in
+:class:`~energy_sim.price_areas.PriceAreaCoupling`. Missing pairs default to 0.
+Values are order-of-magnitude empirical correlations of day-ahead price
+*increments* (not levels) across the EU coupled markets.
+
+The full correlation matrix must be positive semidefinite — the coupling
+class validates this and raises :class:`ValueError` otherwise.
+"""
+
+PRICE_AREAS_CORRELATED: bool = True
+"""Master switch for price area correlation.
+
+When ``False``, each area's O-U process is simulated independently (useful
+for sensitivity checks and for users who do not have correlation data).
+When ``True``, shocks are correlated according to :data:`PRICE_AREA_CORRELATIONS`.
+"""
+
+# ---------------------------------------------------------------------------
+# Interconnections (cross-border transmission links)
+# ---------------------------------------------------------------------------
+INTERCONNECTIONS: dict[str, dict] = {
+    'IT-FR': {
+        'price_area': 'FR',
+        'ntc_import_gw': 4.5,
+        'ntc_export_gw': 2.8,
+        'transport_cost_eur_mwh': 3.0,
+        'seasonal_ntc_factor_monthly': None,
+        'reliability': {
+            'type': 'technology',
+            'tech': 'hvdc_back_to_back',
+        },
+    },
+    'IT-CH': {
+        'price_area': 'CH',
+        'ntc_import_gw': 6.2,
+        'ntc_export_gw': 3.5,
+        'transport_cost_eur_mwh': 2.5,
+        'seasonal_ntc_factor_monthly': None,
+        'reliability': {
+            'type': 'technology',
+            'tech': 'overhead_ac',
+        },
+    },
+    'IT-AT': {
+        'price_area': 'AT',
+        'ntc_import_gw': 0.3,
+        'ntc_export_gw': 0.3,
+        'transport_cost_eur_mwh': 4.0,
+        'seasonal_ntc_factor_monthly': None,
+        'reliability': {
+            'type': 'technology',
+            'tech': 'overhead_ac',
+        },
+    },
+    'IT-SI': {
+        'price_area': 'SI',
+        'ntc_import_gw': 0.6,
+        'ntc_export_gw': 0.45,
+        'transport_cost_eur_mwh': 3.5,
+        'seasonal_ntc_factor_monthly': None,
+        'reliability': {
+            'type': 'technology',
+            'tech': 'overhead_ac',
+        },
+    },
+    'IT-GR': {
+        'price_area': 'GR',
+        'ntc_import_gw': 0.5,
+        'ntc_export_gw': 0.5,
+        'transport_cost_eur_mwh': 5.0,
+        'seasonal_ntc_factor_monthly': None,
+        'reliability': {
+            'type': 'technology',
+            'tech': 'submarine_cable_hvdc',
+            'mttr_sigma_log': 1.8,
+        },
+    },
+}
+"""Default Italian interconnection topology.
+
+Each entry defines a commercial border with a neighbouring price area.
+NTC values are reference figures consistent with Terna publications; actual
+monthly NTC varies with grid conditions and is not modelled at that resolution.
+
+Keys:
+    price_area (str): Name of a key in :data:`PRICE_AREAS`. The foreign
+        electricity price for this link is the realised path of that area.
+    ntc_import_gw (float): Maximum commercial flow into Italy (GW).
+    ntc_export_gw (float): Maximum commercial flow out of Italy (GW).
+    transport_cost_eur_mwh (float): Wheeling fee + loss compensation
+        (EUR/MWh, applied to both directions).
+    seasonal_ntc_factor_monthly (list[float] | None): Optional 12-element
+        list of monthly multipliers on the nominal NTC. ``None`` = constant
+        NTC year-round.
+    reliability (dict): Reliability model specification, routed through
+        :func:`~energy_sim.reliability.build_reliability_model`. Supported
+        ``type`` values: ``'perfect'``, ``'explicit'``, ``'availability'``,
+        ``'technology'``.
+"""
+
+ENABLE_NTC_FAULTS: bool = True
+"""Master switch for interconnection stochastic faults.
+
+When ``False``, every interconnection uses
+:class:`~energy_sim.reliability.PerfectReliability`, overriding the per-link
+``reliability`` config. Useful for deterministic runs and baseline comparisons.
+"""
+
+ENABLE_INTERCONNECTIONS: bool = True
+"""Master switch for cross-border exchanges.
+
+When ``False``, no import virtual generators or export adjustments are added
+to the dispatch, regardless of :data:`INTERCONNECTIONS` content.
+"""
