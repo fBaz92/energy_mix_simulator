@@ -177,7 +177,7 @@ Implementation:
 - Increase default `noise_sigma` from 0.02 to 0.03–0.05 for more realistic intra-day variability.
 
 ### 6. Import/Export Model (Interconnections)
-**Status**: not started
+**Status**: implemented
 **Priority**: medium — significant modeling addition, requires careful design
 **Depends on**: items 1–4 (the full domestic model — emissions, coal, fuel sensitivity — should be stable before adding cross-border flows)
 

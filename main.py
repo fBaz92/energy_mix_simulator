@@ -19,6 +19,11 @@ Runs the full analysis pipeline in nine sequential steps:
 8. **Dispatch day plots**: single-day merit-order stack visualizations showing
    which generators run at each quarter-hour, for summer/winter with and
    without nuclear.
+9. **Cross-border exchanges**: Italian base mix with realistic interconnections
+   to FR, CH, AT, SI, GR. Compares electricity price, carbon intensity and
+   import dependence with vs. without the foreign market. Generates
+   flow-summary, flow-duration and price-convergence diagnostics plus a
+   dispatch plot showing imports on top of the domestic stack.
 
 All output PNG files are saved to ``output/``.
 """
@@ -31,10 +36,18 @@ import numpy as np
 
 from energy_sim.config import (
     ITALIAN_MIX, GAS_SCENARIOS, COAL_SCENARIOS, CO2_SCENARIOS,
-    QUARTERS_PER_DAY,
+    QUARTERS_PER_DAY, P_BASE,
+    INTERCONNECTIONS, PRICE_AREAS, PRICE_AREA_CORRELATIONS,
+    PRICE_AREAS_CORRELATED, ENABLE_NTC_FAULTS,
 )
 from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import CarbonPriceModel, build_generators
+from energy_sim.dispatch import dispatch_year
+from energy_sim.interconnections import (
+    build_coupling_for_interconnections,
+    build_interconnections_from_config,
+    realize_interconnections,
+)
 from energy_sim.simulation import (
     run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
     build_incremental_heatmap, sweep_fuel_price, sweep_fuel_prices_2d,
@@ -45,6 +58,8 @@ from energy_sim.visualization import (
     plot_carbon_intensity_curve, plot_emissions_breakdown,
     plot_fuel_price_sensitivity, plot_fuel_sensitivity_coefficient,
     plot_fuel_price_heatmap_2d,
+    plot_interconnection_flows_summary, plot_flow_duration_curves,
+    plot_price_convergence, plot_dispatch_with_imports,
 )
 
 
@@ -326,6 +341,118 @@ def main() -> None:
     plot_dispatch_day(gens_nuc, tg, load, 15,
                       os.path.join(out_dir, 'dispatch_winter_nuclear.png'),
                       '(Winter, 20% nuclear)')
+
+    # ── Step 9: Cross-border exchanges ────────────────────────────────
+    # Re-run the base MC with the Italian interconnection topology
+    # (IT-FR, IT-CH, IT-AT, IT-SI, IT-GR) wired in. Each border is
+    # modelled as a stochastic foreign price (O-U, jointly correlated
+    # via Cholesky), a possibly time-varying NTC with random line faults,
+    # and a transport cost. Imports compete in the merit order as virtual
+    # generators; exports happen post-dispatch whenever the domestic
+    # marginal price falls below the foreign floor.
+    #
+    # Expected effects compared to the closed-system base case:
+    # - lower and less volatile domestic price (cheap neighbours displace
+    #   marginal gas)
+    # - lower carbon intensity when importing from low-carbon areas
+    #   (FR @ 50, CH @ 30 gCO₂/kWh) — dual accounting tracks territorial
+    #   and consumption-based emissions separately
+    # - net imports in line with historical Italian figures (~13-18% of
+    #   demand, i.e. ~50-60 TWh/yr)
+    print("\n[9/9] Cross-border exchanges (base mix + interconnections)...")
+    t0 = time.time()
+
+    ic_mc = run_monte_carlo(
+        ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=30,
+        interconnections_cfg=INTERCONNECTIONS,
+        price_areas_cfg=PRICE_AREAS,
+        price_area_correlations=PRICE_AREA_CORRELATIONS,
+        price_areas_correlated=PRICE_AREAS_CORRELATED,
+        enable_ntc_faults=ENABLE_NTC_FAULTS,
+    )
+
+    base_price = base_mc['avg_price'].mean()
+    ic_price = ic_mc['avg_price'].mean()
+    base_ci = base_mc['carbon_intensity'].mean()
+    ic_ci = ic_mc['carbon_intensity'].mean()
+    total_net_import = ic_mc['net_import_twh'].sum(axis=1).mean()
+    total_imported_emis = ic_mc['imported_emissions_tons'].sum(axis=1).mean()
+
+    print(f"  Domestic price:   {base_price:.2f} → {ic_price:.2f} "
+          f"EUR/MWh  ({ic_price - base_price:+.2f})")
+    print(f"  Carbon intensity: {base_ci:.0f} → {ic_ci:.0f} gCO₂/kWh  "
+          f"(territorial, domestic only)")
+    print(f"  Net imports:      {total_net_import:.1f} TWh/yr")
+    print(f"  Imported CO₂:     {total_imported_emis / 1e6:.2f} Mt/yr "
+          f"(consumption-based, embedded in imports)")
+
+    # Per-link summary table
+    print("\n  Per-link flows (MC averages):")
+    print(f"  {'Link':<7} {'Net TWh':>9} {'Import':>9} {'Export':>9} "
+          f"{'Foreign €':>11} {'Sat %':>7}")
+    for i, name in enumerate(ic_mc['interconnection_names']):
+        net = ic_mc['net_import_twh'][:, i].mean()
+        imp = ic_mc['import_gross_twh'][:, i].mean()
+        exp = ic_mc['export_gross_twh'][:, i].mean()
+        fp = ic_mc['foreign_price_mean'][:, i].mean()
+        sat = ic_mc['ntc_import_saturation_pct'][:, i].mean()
+        print(f"  {name:<7} {net:>9.2f} {imp:>9.2f} {exp:>9.2f} "
+              f"{fp:>11.2f} {sat:>7.1f}")
+
+    # Summary bar chart across MC runs
+    plot_interconnection_flows_summary(
+        ic_mc,
+        os.path.join(out_dir, 'ic_flows_summary.png'),
+    )
+
+    # For flow-duration / price-convergence / dispatch-day plots we need
+    # a single dispatched year (the MC loop discards per-run DispatchResults
+    # to keep memory bounded). Rebuild one with the same seed logic.
+    links = build_interconnections_from_config(
+        INTERCONNECTIONS, enable_faults=ENABLE_NTC_FAULTS)
+    coupling = build_coupling_for_interconnections(
+        links, price_areas_cfg=PRICE_AREAS,
+        correlations_cfg=PRICE_AREA_CORRELATIONS,
+        correlated=PRICE_AREAS_CORRELATED)
+
+    ss = np.random.SeedSequence(42)
+    ss_gen, ss_prices, ss_faults = ss.spawn(3)
+    rng_gen = np.random.default_rng(ss_gen)
+    rng_prices = np.random.default_rng(ss_prices)
+    rng_faults = np.random.default_rng(ss_faults)
+
+    from energy_sim.config import ITALIAN_HOLIDAYS_DOY, DEFAULT_LOAD_NOISE_SIGMA
+    tg_ic = TimeGrid()
+    tg_ic.set_holiday_calendar(ITALIAN_HOLIDAYS_DOY)
+
+    gens_ic = build_generators(ITALIAN_MIX, GAS_SCENARIOS['base'])
+    for g in gens_ic:
+        g.prepare_run(tg_ic, rng_gen, CarbonPriceModel(**CO2_SCENARIOS['base']))
+
+    lp_ic = LoadProfile(tg_ic)
+    lp_ic.set_weekday_factors({0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0,
+                                5: 0.85, 6: 0.75})
+    lp_ic.set_holiday_factor(0.80)
+    load_ic = lp_ic.generate(rng_gen, noise_sigma=DEFAULT_LOAD_NOISE_SIGMA)
+
+    realizations = realize_interconnections(
+        links, coupling, tg_ic, rng_prices, rng_faults)
+    result_ic = dispatch_year(gens_ic, load_ic, realizations)
+
+    plot_flow_duration_curves(
+        result_ic, os.path.join(out_dir, 'ic_flow_duration.png'))
+    plot_price_convergence(
+        result_ic, os.path.join(out_dir, 'ic_price_convergence.png'))
+    plot_dispatch_with_imports(
+        gens_ic, result_ic, load_ic, 15,
+        os.path.join(out_dir, 'dispatch_winter_with_imports.png'),
+        '(Winter, base mix + interconnections)')
+    plot_dispatch_with_imports(
+        gens_ic, result_ic, load_ic, 190,
+        os.path.join(out_dir, 'dispatch_summer_with_imports.png'),
+        '(Summer, base mix + interconnections)')
+
+    print(f"  Time: {time.time() - t0:.1f}s")
 
     print("\n" + "=" * 60)
     print(f"DONE. All outputs in {out_dir}/")
