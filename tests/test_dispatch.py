@@ -423,7 +423,7 @@ class TestInterconnectionsInDispatch:
         """The import row in result.emissions must be identically zero.
 
         This is the IPCC convention: cross-border imports contribute to
-        consumption-based emissions (``emissions_imported_kg``) but NOT
+        consumption-based emissions (``emissions_imported_tons``) but NOT
         to territorial emissions. Scenario: undersized domestic unit so
         net import is positive and consumption-based emissions are
         non-zero (ci=500 gCO₂/kWh).
@@ -442,7 +442,10 @@ class TestInterconnectionsInDispatch:
         # Import row is the last; its territorial emissions must be 0
         assert np.all(result.emissions[-1] == 0.0)
         # But consumption-based emissions must be positive (CI = 500)
-        assert result.emissions_imported_kg.sum() > 0
+        assert result.emissions_imported_tons.sum() > 0
+        # Sanity check on unit: ~9 GW import × 8760 h × 500 gCO₂/kWh
+        # ≈ 39.4 Mt/year. Should be in the ballpark of 10⁷ tons.
+        assert result.emissions_imported_tons.sum() > 1e7
 
     def test_no_realizations_is_backward_compatible(self, tg, co2):
         """Calling dispatch_year without interconnection_realizations or

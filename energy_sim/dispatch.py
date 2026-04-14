@@ -77,11 +77,13 @@ class DispatchResult:
             interconnection, shape ``(n_interconnections, 35040)`` in
             EUR/MWh. Useful for convergence analysis. Same ordering as
             :attr:`interconnection_names`.
-        emissions_imported_kg (np.ndarray): Consumption-based emissions
+        emissions_imported_tons (np.ndarray): Consumption-based emissions
             embedded in net imports, shape ``(n_interconnections, 35040)``
-            in kg CO₂ per quarter-hour. Computed as
-            ``max(net_import, 0) * P_BASE_GW * 1000 * 0.25 * CI_g/kWh / 1000``
-            (the export portion is not credited as negative footprint).
+            in tonnes CO₂ per quarter-hour. Computed as
+            ``max(net_import, 0) * P_BASE_GW * 0.25 * CI_g/kWh``, which
+            collapses pu·GWh · (g/kWh) = pu·10⁶·g = pu·tons (the factor
+            10⁶ kWh/GWh cancels the factor 10⁻⁶ ton/g). The export
+            portion is not credited as a negative footprint.
     """
 
     power: np.ndarray
@@ -97,7 +99,7 @@ class DispatchResult:
     interconnection_names: list[str] = field(default_factory=list)
     foreign_prices: np.ndarray = field(
         default_factory=lambda: np.zeros((0, 0)))
-    emissions_imported_kg: np.ndarray = field(
+    emissions_imported_tons: np.ndarray = field(
         default_factory=lambda: np.zeros((0, 0)))
 
 
@@ -306,15 +308,18 @@ def dispatch_year(
             [r.carbon_intensity_g_per_kwh
              for r in interconnection_realizations])
         # Consumption-based emissions: only when net flow is into IT (import).
-        # Energy per quarter-hour in MWh = net_import_pu * P_BASE * 0.25
-        # Emissions in kg = energy_MWh * 1000 (kWh) * CI(g/kWh) / 1000 (g→kg)
+        # Dimensional analysis: pos_net[pu] · P_BASE[GW] · 0.25[h] gives
+        # energy in pu·GWh; multiplying by CI[g/kWh] yields
+        # pu · GWh · g/kWh = pu · 10⁶ kWh · g/kWh = pu · 10⁶ g = pu · tons.
+        # So the product below is already in tonnes of CO₂ per quarter-hour —
+        # no further scaling needed.
         pos_net = np.maximum(net_import_pu, 0.0)
-        emissions_imported_kg = (
+        emissions_imported_tons = (
             pos_net * P_BASE * 0.25 * ci_g_per_kwh[:, np.newaxis])
     else:
         net_import_pu = np.zeros((0, n_t))
         foreign_prices = np.zeros((0, n_t))
-        emissions_imported_kg = np.zeros((0, n_t))
+        emissions_imported_tons = np.zeros((0, n_t))
 
     # Territorial CO₂ emissions: kg per quarter-hour per unit.
     # power_pu * P_BASE(GW) * 0.25(h) = energy in GWh
@@ -341,5 +346,5 @@ def dispatch_year(
         net_import_pu=net_import_pu,
         interconnection_names=[r.name for r in interconnection_realizations],
         foreign_prices=foreign_prices,
-        emissions_imported_kg=emissions_imported_kg,
+        emissions_imported_tons=emissions_imported_tons,
     )

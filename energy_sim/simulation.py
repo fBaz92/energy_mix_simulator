@@ -257,8 +257,10 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
             net_import_twh_rows.append(net_mwh / 1e6)
             import_gross_twh_rows.append(import_twh)
             export_gross_twh_rows.append(export_twh)
+            # DispatchResult.emissions_imported_tons is already in tonnes
+            # per quarter-hour — simply sum over the year.
             imported_emissions_tons_rows.append(
-                result.emissions_imported_kg.sum(axis=1) / 1000.0)
+                result.emissions_imported_tons.sum(axis=1))
             foreign_price_mean_rows.append(result.foreign_prices.mean(axis=1))
 
             # NTC saturation: share of timesteps where import reaches the
