@@ -485,3 +485,263 @@ def plot_dispatch_day(generators: list[Generator], time_grid: TimeGrid,
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
+
+
+# ── Interconnection visualizations ──────────────────────────────────────
+
+
+def plot_interconnection_flows_summary(mc_results: dict,
+                                        out_path: str) -> None:
+    """Summary bar chart of yearly cross-border flows per interconnection.
+
+    Side-by-side bars per link show mean gross import, gross export and net
+    import (positive = into domestic system) across the MC runs, with the
+    standard deviation as error bar on the net flow. Also overlays the mean
+    foreign price and the mean NTC saturation percentage on a secondary axis,
+    which together explain *why* each border imports/exports at a given level.
+
+    Args:
+        mc_results: Output of :func:`~energy_sim.simulation.run_monte_carlo`
+            when interconnections are active. Must contain the keys
+            ``'interconnection_names'``, ``'net_import_twh'``,
+            ``'import_gross_twh'``, ``'export_gross_twh'``,
+            ``'foreign_price_mean'``, ``'ntc_import_saturation_pct'``.
+        out_path: File path to save the figure (PNG).
+    """
+    names = mc_results['interconnection_names']
+    if not names:
+        print(f"No interconnections — skipping {out_path}")
+        return
+
+    n = len(names)
+    x = np.arange(n)
+    width = 0.27
+
+    imp = mc_results['import_gross_twh'].mean(axis=0)
+    exp = mc_results['export_gross_twh'].mean(axis=0)
+    net = mc_results['net_import_twh'].mean(axis=0)
+    net_std = mc_results['net_import_twh'].std(axis=0)
+    fprice = mc_results['foreign_price_mean'].mean(axis=0)
+    sat = mc_results['ntc_import_saturation_pct'].mean(axis=0)
+
+    fig, ax1 = plt.subplots(figsize=(12, 5.5))
+
+    ax1.bar(x - width, imp, width, label='Gross import', color='#2E7D32')
+    ax1.bar(x, exp, width, label='Gross export', color='#C62828')
+    ax1.bar(x + width, net, width, yerr=net_std, label='Net import \u00b1 \u03c3',
+            color='#1565C0', capsize=3)
+    ax1.axhline(0, color='black', lw=0.6)
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(names)
+    ax1.set_ylabel('Energy flow (TWh/yr)')
+    ax1.legend(loc='upper left')
+    ax1.grid(axis='y', alpha=0.3)
+
+    ax2 = ax1.twinx()
+    ax2.plot(x, fprice, 'D--', color='#F57F17', label='Mean foreign price (\u20ac/MWh)')
+    ax2.plot(x, sat, 's:', color='#6A1B9A', label='NTC import saturation (%)')
+    ax2.set_ylabel('Foreign price (\u20ac/MWh) / NTC saturation (%)')
+    ax2.legend(loc='upper right')
+
+    ax1.set_title('Cross-border flows summary (Monte Carlo averages)')
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_flow_duration_curves(result, out_path: str) -> None:
+    """Flow-duration curves per interconnection for a single dispatched year.
+
+    For each link, sorts its net-import path (TWh-rate) in descending order
+    and plots it against the percentile of time. The area above zero is
+    energy imported; the area below is energy exported. Useful to see the
+    asymmetry of a link (e.g. a border that imports most of the time with a
+    small occasional export tail).
+
+    Args:
+        result: A :class:`~energy_sim.dispatch.DispatchResult` produced with
+            non-empty ``interconnection_realizations``. The function reads
+            :attr:`net_import_pu` and :attr:`interconnection_names`.
+        out_path: File path to save the figure (PNG).
+    """
+    if result.net_import_pu.size == 0:
+        print(f"No interconnections in DispatchResult — skipping {out_path}")
+        return
+
+    n_links, T = result.net_import_pu.shape
+    # Convert p.u. to GW for readability
+    flows_gw = result.net_import_pu * P_PEAK_GW
+    pct = np.linspace(0, 100, T)
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    for i, name in enumerate(result.interconnection_names):
+        sorted_flow = np.sort(flows_gw[i])[::-1]
+        ax.plot(pct, sorted_flow, label=name, lw=1.3)
+
+    ax.axhline(0, color='black', lw=0.6, alpha=0.7)
+    ax.fill_between([0, 100], 0, ax.get_ylim()[1], color='#E8F5E9',
+                    alpha=0.25, zorder=0)
+    ax.fill_between([0, 100], ax.get_ylim()[0], 0, color='#FFEBEE',
+                    alpha=0.25, zorder=0)
+    ax.text(50, ax.get_ylim()[1] * 0.85, 'Import',
+            ha='center', color='#2E7D32', fontsize=10)
+    ax.text(50, ax.get_ylim()[0] * 0.85, 'Export',
+            ha='center', color='#C62828', fontsize=10)
+
+    ax.set_xlabel('Share of year (%)')
+    ax.set_ylabel('Net import (GW, + = into domestic system)')
+    ax.set_title('Flow-duration curves per interconnection (single year)')
+    ax.legend(loc='upper right')
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_price_convergence(result, out_path: str,
+                            n_points: int = 3000) -> None:
+    """Scatter of domestic marginal price vs foreign price, per interconnection.
+
+    For each link, plots the domestic price against its foreign price at the
+    same timestep, overlaid with the no-arbitrage dead-band
+    ``[foreign - τ, foreign + τ]``: above the upper line imports are
+    profitable, below the lower line exports are profitable, and inside the
+    band the dispatch is indifferent to the border. A sample of ``n_points``
+    timesteps is shown per link to keep the figure readable.
+
+    Args:
+        result: A :class:`~energy_sim.dispatch.DispatchResult` produced with
+            non-empty ``interconnection_realizations``. The function reads
+            :attr:`marginal_price`, :attr:`foreign_prices`, and
+            :attr:`interconnection_names`.
+        out_path: File path to save the figure (PNG).
+        n_points: Random subsample of timesteps to plot per link.
+    """
+    if result.foreign_prices.size == 0:
+        print(f"No interconnections in DispatchResult — skipping {out_path}")
+        return
+
+    n_links, T = result.foreign_prices.shape
+    rng = np.random.default_rng(0)
+    idx = rng.choice(T, size=min(n_points, T), replace=False)
+
+    n_cols = min(3, n_links)
+    n_rows = int(np.ceil(n_links / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows),
+                             squeeze=False)
+
+    dom = result.marginal_price[idx]
+    for i, name in enumerate(result.interconnection_names):
+        ax = axes[i // n_cols][i % n_cols]
+        foreign = result.foreign_prices[i, idx]
+        ax.scatter(foreign, dom, s=6, alpha=0.35, color='#1565C0')
+
+        lo, hi = float(np.min(foreign)), float(np.max(foreign))
+        xs = np.linspace(lo, hi, 100)
+        ax.plot(xs, xs, 'k-', lw=0.8, alpha=0.6, label='y = x')
+        # Dead-band τ is NOT read from result directly (foreign ± τ) — we
+        # approximate it from the typical transport cost via the spread of
+        # the no-flow zone observed in the scatter. Safer: request it from
+        # the caller if a precise line is needed. For now plot a light
+        # reference band at ±5 EUR/MWh.
+        ax.fill_between(xs, xs - 5, xs + 5, color='grey', alpha=0.15,
+                        label='approx. \u00b15 \u20ac/MWh band')
+
+        ax.set_title(name)
+        ax.set_xlabel('Foreign price (\u20ac/MWh)')
+        ax.set_ylabel('Domestic marginal price (\u20ac/MWh)')
+        ax.grid(alpha=0.3)
+        if i == 0:
+            ax.legend(loc='upper left', fontsize=8)
+
+    # Hide any unused subplot cells
+    for j in range(n_links, n_rows * n_cols):
+        axes[j // n_cols][j % n_cols].axis('off')
+
+    fig.suptitle('Price convergence: domestic vs foreign per link', y=1.02)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_dispatch_with_imports(generators: list,
+                                result,
+                                load: np.ndarray,
+                                day_of_year: int,
+                                out_path: str,
+                                title_extra: str = '') -> None:
+    """Stacked dispatch plot for one day, including imports as a separate band.
+
+    Variant of :func:`plot_dispatch_day` that accepts a pre-computed
+    :class:`~energy_sim.dispatch.DispatchResult` (so that imports and
+    exports are included) and draws an explicit ``import`` band on top of
+    the domestic stack. A signed export trace is shown below the zero line
+    to make the balance visible at a glance.
+
+    Args:
+        generators: Domestic generators (rows ``0..n_domestic-1`` of
+            ``result.power``).
+        result: :class:`DispatchResult` produced for the same ``generators``
+            and ``load``, possibly with interconnections. Import rows are
+            detected by ``gen_type == 'import'``.
+        load: Full-year load array (p.u.), shape ``(T,)``.
+        day_of_year: Day to plot (1-365).
+        out_path: File path to save the figure (PNG).
+        title_extra: Optional suffix for the chart title.
+    """
+    start = (day_of_year - 1) * QUARTERS_PER_DAY
+    end = start + QUARTERS_PER_DAY
+    hours = np.linspace(0, 24, QUARTERS_PER_DAY)
+
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    colors = {
+        'hydro_mustrun': '#2196F3',
+        'nuclear': '#9C27B0',
+        'solar': '#FFC107',
+        'wind': '#4CAF50',
+        'gas': '#FF5722',
+        'coal': '#4E342E',
+        'import': '#00838F',
+    }
+
+    # Domestic stack
+    bottom = np.zeros(QUARTERS_PER_DAY)
+    for i, g in enumerate(generators):
+        p = result.power[i, start:end] * P_PEAK_GW
+        ax.fill_between(hours, bottom, bottom + p,
+                        label=g.name, color=colors.get(g.gen_type, '#999'),
+                        alpha=0.85)
+        bottom += p
+
+    # Import stack on top (aggregate across all import rows)
+    import_rows = [i for i, t in enumerate(result.gen_types) if t == 'import']
+    if import_rows:
+        imp_total = result.power[import_rows, start:end].sum(axis=0) * P_PEAK_GW
+        ax.fill_between(hours, bottom, bottom + imp_total,
+                        label='net import', color=colors['import'],
+                        alpha=0.85, hatch='//')
+        bottom += imp_total
+
+    # Signed export trace below zero (from net_import_pu negative part)
+    if result.net_import_pu.size > 0:
+        # Total export GW per quarter hour (sum over links, negative flow)
+        daily_net = result.net_import_pu[:, start:end].sum(axis=0) * P_PEAK_GW
+        export_gw = np.minimum(daily_net, 0.0)
+        if export_gw.min() < -1e-6:
+            ax.fill_between(hours, export_gw, 0.0, color='#C62828',
+                            alpha=0.4, label='export (abroad)')
+
+    ax.plot(hours, load[start:end] * P_PEAK_GW, 'k-', lw=2, label='Load')
+    ax.axhline(0, color='black', lw=0.6)
+    ax.set_xlabel('Hour')
+    ax.set_ylabel('Power (GW, + = supply, \u2212 = export)')
+    ax.set_title(f'Dispatch with interconnections \u2014 Day {day_of_year} {title_extra}')
+    ax.legend(loc='upper left', ncol=2, fontsize=8)
+    ax.set_xlim(0, 24)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
