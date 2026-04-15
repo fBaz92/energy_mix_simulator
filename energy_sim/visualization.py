@@ -745,3 +745,282 @@ def plot_dispatch_with_imports(generators: list,
     plt.savefig(out_path, dpi=150)
     plt.close()
     print(f"Saved: {out_path}")
+
+
+def plot_import_export_hours(mc_results: dict, out_path: str) -> None:
+    """Horizontal bar chart of yearly import vs export hours per link.
+
+    For each interconnection shows two stacked horizontal bars: blue for
+    hours in net-import state, red for hours in net-export state. A
+    reference vertical line at 8760 h makes it immediate to read the
+    utilization factor. The complementary idle share (hours with neither
+    import nor export, typically dominated by NTC faults) is shown as a
+    translucent grey tail.
+
+    Args:
+        mc_results: Output of :func:`~energy_sim.simulation.run_monte_carlo`.
+            Requires ``'interconnection_names'``, ``'import_hours'`` and
+            ``'export_hours'``.
+        out_path: File path to save the figure (PNG).
+    """
+    names = mc_results['interconnection_names']
+    if not names:
+        print(f"No interconnections — skipping {out_path}")
+        return
+
+    imp_h = mc_results['import_hours'].mean(axis=0)
+    exp_h = mc_results['export_hours'].mean(axis=0)
+    idle_h = np.maximum(8760.0 - imp_h - exp_h, 0.0)
+
+    y = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(10, 0.6 * len(names) + 2))
+    ax.barh(y, imp_h, color='#1565C0', label='Import hours')
+    ax.barh(y, exp_h, left=imp_h, color='#C62828', label='Export hours')
+    ax.barh(y, idle_h, left=imp_h + exp_h,
+            color='#BDBDBD', alpha=0.5, label='Idle / faulted')
+    ax.axvline(8760, color='black', lw=0.5, ls='--')
+    ax.set_yticks(y)
+    ax.set_yticklabels(names)
+    ax.set_xlabel('Hours per year')
+    ax.set_title('Cross-border utilisation \u2014 hours in import vs export state')
+    ax.legend(loc='lower right')
+    ax.grid(axis='x', alpha=0.3)
+
+    for i, (ih, eh) in enumerate(zip(imp_h, exp_h)):
+        total = ih + eh
+        ax.text(total + 100, i, f'{total / 8760 * 100:.0f}% used',
+                va='center', fontsize=8, color='#555555')
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_energy_bars_by_country(mc_results: dict, out_path: str) -> None:
+    """Grouped bar chart of yearly import and export energy per link.
+
+    Shows gross import (positive) and gross export (negative) per link in
+    TWh, with error bars representing one standard deviation across MC
+    runs. The net-import point (diamond) overlays the pair, making
+    visually clear whether each link is structurally importing or
+    exporting.
+
+    Args:
+        mc_results: Output of :func:`~energy_sim.simulation.run_monte_carlo`.
+            Requires ``'interconnection_names'``, ``'import_energy_mwh'``
+            and ``'export_energy_mwh'``. Values are expected in MWh and
+            converted to TWh for plotting.
+        out_path: File path to save the figure (PNG).
+    """
+    names = mc_results['interconnection_names']
+    if not names:
+        print(f"No interconnections — skipping {out_path}")
+        return
+
+    imp_twh = mc_results['import_energy_mwh'] / 1e6
+    exp_twh = mc_results['export_energy_mwh'] / 1e6
+
+    imp_mean = imp_twh.mean(axis=0)
+    imp_std = imp_twh.std(axis=0)
+    exp_mean = exp_twh.mean(axis=0)
+    exp_std = exp_twh.std(axis=0)
+    net_mean = imp_mean - exp_mean
+
+    x = np.arange(len(names))
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(x, imp_mean, yerr=imp_std, color='#1565C0',
+           label='Gross import', capsize=4, alpha=0.85)
+    ax.bar(x, -exp_mean, yerr=exp_std, color='#C62828',
+           label='Gross export', capsize=4, alpha=0.85)
+    ax.plot(x, net_mean, 'D', color='black',
+            markersize=8, label='Net import')
+    ax.axhline(0, color='black', lw=0.6)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names)
+    ax.set_ylabel('Energy (TWh/yr)')
+    ax.set_title('Annual energy exchanged by interconnection '
+                 '(import up, export down)')
+    ax.legend(loc='upper right')
+    ax.grid(axis='y', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_economic_benefit_monthly(mc_results: dict, out_path: str) -> None:
+    """Monthly congestion-rent economic benefit stacked by interconnection.
+
+    Sums the per-quarter-hour economic benefits into calendar months and
+    stacks them link by link, so each bar shows both the total monthly
+    benefit and the contribution of each border. The annual total per
+    link is reported in the legend for reference.
+
+    Args:
+        mc_results: Output of :func:`~energy_sim.simulation.run_monte_carlo`.
+            Requires ``'interconnection_names'``,
+            ``'economic_benefit_monthly_eur'`` (shape ``(n_runs, n_links,
+            12)``) and ``'total_economic_benefit_eur'``.
+        out_path: File path to save the figure (PNG).
+    """
+    names = mc_results['interconnection_names']
+    if not names:
+        print(f"No interconnections — skipping {out_path}")
+        return
+
+    monthly = mc_results['economic_benefit_monthly_eur'].mean(axis=0) / 1e6
+    totals = mc_results['total_economic_benefit_eur'].mean(axis=0) / 1e6
+
+    months = np.arange(1, 13)
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    bottom = np.zeros(12)
+    cmap = plt.get_cmap('tab10')
+    for i, name in enumerate(names):
+        ax.bar(months, monthly[i], bottom=bottom, width=0.8,
+               color=cmap(i % 10),
+               label=f'{name} ({totals[i]:,.0f} M\u20ac/yr)')
+        bottom += monthly[i]
+
+    ax.set_xticks(months)
+    ax.set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+    ax.set_ylabel('Economic benefit (M\u20ac)')
+    ax.set_title('Monthly congestion-rent economic benefit by interconnection')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.grid(axis='y', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_co2_benefit_monthly(mc_results: dict, out_path: str) -> None:
+    """Monthly CO\u2082 benefit (signed) per interconnection as grouped bars.
+
+    Groups (rather than stacks) because the metric is *signed*: stacking
+    would hide the sign of individual links inside a net aggregate. Each
+    month shows one bar per link, coloured green when the link reduced
+    system emissions that month and red otherwise. A horizontal line at
+    zero separates the two regimes; the annual total per link is in the
+    legend.
+
+    Args:
+        mc_results: Output of :func:`~energy_sim.simulation.run_monte_carlo`.
+            Requires ``'interconnection_names'``,
+            ``'co2_benefit_monthly_tons'`` and ``'total_co2_benefit_tons'``.
+        out_path: File path to save the figure (PNG).
+    """
+    names = mc_results['interconnection_names']
+    if not names:
+        print(f"No interconnections — skipping {out_path}")
+        return
+
+    monthly = mc_results['co2_benefit_monthly_tons'].mean(axis=0) / 1e3  # kt
+    totals = mc_results['total_co2_benefit_tons'].mean(axis=0) / 1e3
+
+    n_links = len(names)
+    months = np.arange(12)
+    group_w = 0.8
+    bar_w = group_w / n_links
+
+    fig, ax = plt.subplots(figsize=(12, 5.5))
+    cmap = plt.get_cmap('tab10')
+    for i, name in enumerate(names):
+        offset = (i - (n_links - 1) / 2) * bar_w
+        ax.bar(months + offset, monthly[i], bar_w,
+               color=cmap(i % 10), edgecolor='black', linewidth=0.3,
+               label=f'{name} ({totals[i]:+,.0f} kt/yr)')
+    ax.axhline(0, color='black', lw=0.8)
+    ax.set_xticks(months)
+    ax.set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+    ax.set_ylabel('CO\u2082 benefit (kt, + = avoided emissions)')
+    ax.set_title('Monthly CO\u2082 benefit by interconnection '
+                 '(+ = cleaner than domestic, \u2212 = dirtier)')
+    ax.legend(loc='upper right', fontsize=8, ncol=min(n_links, 3))
+    ax.grid(axis='y', alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_generation_mix_pie(mc_results: dict, mix_config: dict,
+                            out_path: str) -> None:
+    """Pie chart of the annual domestic energy generation by technology.
+
+    Uses each emissive technology's annual emissions and the identity
+    ``energy_e = emissions * eta / emission_factor`` to reconstruct the
+    exact dispatched energy in MWh_e. For carbon-free technologies
+    (solar, wind, hydro, nuclear) that mapping is undefined, so we fall
+    back to a nameplate proxy ``capacity_gw * 8760 * nominal_cf`` and
+    tag those slices as ``(est.)`` in the legend to keep the
+    approximation transparent.
+
+    Args:
+        mc_results: Output of :func:`~energy_sim.simulation.run_monte_carlo`.
+            Requires ``'emissions_by_tech'``.
+        mix_config: Generation mix dictionary (same shape as
+            :data:`~energy_sim.config.ITALIAN_MIX`). Used to size the
+            zero-emission slices from nameplate capacity and nominal
+            capacity factors.
+        out_path: File path to save the figure (PNG).
+    """
+    # Nominal capacity factors per technology (used only for zero-carbon
+    # slices; thermal slices are reconstructed exactly from emissions).
+    NOMINAL_CF = {
+        'solar': 0.18, 'wind': 0.28, 'hydro': 0.30,
+        'nuclear': 0.90, 'geothermal': 0.85, 'biomass': 0.60,
+    }
+
+    emissions_by_tech = mc_results['emissions_by_tech']
+    tech_twh: dict[str, float] = {}
+    is_estimated: dict[str, bool] = {}
+
+    for tech, cfg in mix_config.items():
+        ef = cfg.get('emission_factor', 0.0)
+        eta = cfg.get('efficiency', 1.0) or 1.0
+        capacity_gw = cfg.get('capacity_gw', 0.0)
+        if ef > 0 and tech in emissions_by_tech:
+            # tons / (tCO\u2082/MWh_th) = MWh_th; MWh_th * \u03b7 = MWh_e;
+            # MWh_e / 1e6 = TWh_e.
+            tons = emissions_by_tech[tech].mean()
+            twh = tons * eta / ef / 1e6
+            tech_twh[tech] = twh
+            is_estimated[tech] = False
+        else:
+            cf = NOMINAL_CF.get(tech, 0.5)
+            tech_twh[tech] = capacity_gw * 8760 * cf / 1e3  # GW\u00b7h \u2192 TWh
+            is_estimated[tech] = True
+
+    # Sort for a stable, readable ordering (largest slices first).
+    items = sorted(tech_twh.items(), key=lambda kv: -kv[1])
+    labels = []
+    values = []
+    for name, v in items:
+        if v <= 0:
+            continue
+        suffix = ' (est.)' if is_estimated[name] else ''
+        labels.append(f'{name}{suffix}\n{v:.1f} TWh')
+        values.append(v)
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    colors = plt.get_cmap('tab20').colors[:len(values)]
+    _wedges, _texts, autotexts = ax.pie(
+        values, labels=labels, colors=colors, autopct='%1.1f%%',
+        startangle=90, pctdistance=0.78,
+        wedgeprops={'linewidth': 0.5, 'edgecolor': 'white'},
+    )
+    for t in autotexts:
+        t.set_fontsize(9)
+        t.set_color('white')
+        t.set_fontweight('bold')
+    total = sum(values)
+    ax.set_title(f'Annual domestic generation mix (total \u2248 {total:.0f} TWh)\n'
+                 f'Emissive slices exact from CO\u2082; clean slices '
+                 f'estimated from nameplate capacity factors')
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")

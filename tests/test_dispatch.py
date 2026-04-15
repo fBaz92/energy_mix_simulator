@@ -463,3 +463,135 @@ class TestInterconnectionsInDispatch:
         # No interconnection metadata populated
         assert r_none.interconnection_names == []
         assert r_none.net_import_pu.shape == (0, tg.n)
+        # InterconnectionMetrics must be None in the no-link case so
+        # downstream callers can branch cleanly without a shape dance.
+        assert r_none.ic_metrics is None
+
+
+class TestInterconnectionMetrics:
+    """Invariants of :class:`~energy_sim.dispatch.InterconnectionMetrics`.
+
+    Validates that the congestion-rent economic benefit is non-negative
+    by construction, that the CO\u2082 benefit carries the correct sign
+    under well-defined CI differentials, that hour/energy aggregates are
+    consistent with the underlying power matrix, and that the load-weighted
+    marginal CI stays inside the physically admissible envelope set by
+    the domestic fleet.
+    """
+
+    def _make_realization(self, tg, foreign_price_eur_mwh, tau=2.0,
+                          ntc_import_gw=10.0, ntc_export_gw=10.0,
+                          ci=200.0):
+        """Build a single-link realization with constant foreign price."""
+        from energy_sim.interconnections import Interconnection
+        from energy_sim.reliability import PerfectReliability
+        link = Interconnection(
+            name='IT-X', price_area_name='X',
+            ntc_import_gw=ntc_import_gw, ntc_export_gw=ntc_export_gw,
+            transport_cost_eur_mwh=tau,
+            reliability_model=PerfectReliability(),
+        )
+        foreign = np.full(tg.n, float(foreign_price_eur_mwh))
+        return [link.realize(foreign, ci, tg, np.random.default_rng(0))]
+
+    def test_economic_benefit_non_negative(self, tg, co2):
+        """Congestion-rent benefit must be \u2265 0 at every quarter-hour.
+
+        The merit order only dispatches imports when they are at most as
+        expensive as the marginal domestic unit, so (clearing \u2212 SRMC)
+        is non-negative by construction. The metric clips residual
+        floating-point slack; asserting on the raw array catches
+        regressions in that clipping step or in the ordering logic.
+        """
+        g = _quick_gen("dom", 40.0, vom=50.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=20.0, tau=0.0,
+            ntc_import_gw=20.0, ntc_export_gw=10.0)
+        load = np.full(tg.n, 0.6)
+        result = dispatch_year([g], load, real)
+
+        m = result.ic_metrics
+        assert m is not None
+        assert m.economic_benefit_eur_qh.min() >= -1e-12
+        annual_reconstructed = m.economic_benefit_eur_qh.sum(axis=1)
+        assert np.allclose(m.total_economic_benefit_eur,
+                           annual_reconstructed, rtol=1e-12, atol=1e-6)
+
+    def test_co2_benefit_positive_when_import_is_cleaner(self, tg, co2):
+        """Importing from a CI=50 g/kWh market against a domestic marginal
+        mix at \u2248850 g/kWh must yield a positive CO\u2082 benefit
+        — the import displaces dirtier domestic generation.
+        """
+        dirty = _quick_gen("coal", 40.0, vom=30.0,
+                           efficiency=0.40, emission_factor=0.34)
+        dirty.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=20.0, tau=0.0,
+            ntc_import_gw=20.0, ntc_export_gw=0.0, ci=50.0)
+        load = np.full(tg.n, 0.6)
+        result = dispatch_year([dirty], load, real)
+        m = result.ic_metrics
+        assert m.total_co2_benefit_tons[0] > 0
+        assert m.co2_benefit_tons_qh[0].min() >= -1e-9
+
+    def test_co2_benefit_negative_when_import_is_dirtier(self, tg, co2):
+        """Mirror case: importing from a CI=900 g/kWh market against a
+        cleaner domestic mix (gas at \u2248364 g/kWh) must give a
+        negative total benefit — net emissions increase.
+        """
+        gas_like = _quick_gen("gas", 40.0, vom=30.0,
+                              efficiency=0.55, emission_factor=0.20)
+        gas_like.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=10.0, tau=0.0,
+            ntc_import_gw=20.0, ntc_export_gw=0.0, ci=900.0)
+        load = np.full(tg.n, 0.6)
+        result = dispatch_year([gas_like], load, real)
+        assert result.ic_metrics.total_co2_benefit_tons[0] < 0
+
+    def test_hours_and_energy_aggregates_consistent(self, tg, co2):
+        """``import_hours + export_hours <= 8760`` and
+        ``import_energy_mwh`` matches the manual sum of the import power
+        row (in MWh). Exposes integration bugs in the aggregation block.
+        """
+        g = _quick_gen("g", 40.0, vom=30.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=25.0, tau=0.0,
+            ntc_import_gw=20.0, ntc_export_gw=10.0)
+        load = np.full(tg.n, 0.3)
+        result = dispatch_year([g], load, real)
+        m = result.ic_metrics
+        assert m.import_hours[0] + m.export_hours[0] <= 8760.0 + 1e-9
+
+        from energy_sim.config import P_BASE
+        import_row = result.power[-1]
+        expected_mwh = import_row.sum() * P_BASE * 1000.0 * 0.25
+        assert m.import_energy_mwh[0] == pytest.approx(expected_mwh,
+                                                        rel=1e-9)
+
+    def test_marginal_ci_inside_fleet_envelope(self, tg, co2):
+        """Load-weighted marginal CI must lie between 0 and the dirtiest
+        unit's CI at every quarter-hour where the fleet is online.
+
+        A weighted mean of non-negative values with non-negative weights
+        cannot exceed the maximum component CI, nor drop below zero.
+        Violating this invariant would signal a shape mismatch in the
+        vectorised computation.
+        """
+        clean = _quick_gen("clean", 20.0, vom=10.0,
+                           efficiency=1.0, emission_factor=0.0)
+        dirty = _quick_gen("dirty", 20.0, vom=60.0,
+                           efficiency=0.40, emission_factor=0.34)
+        for g in [clean, dirty]:
+            g.prepare_run(tg, np.random.default_rng(0), co2)
+        real = self._make_realization(
+            tg, foreign_price_eur_mwh=30.0, tau=0.0,
+            ntc_import_gw=5.0, ntc_export_gw=0.0, ci=200.0)
+        load = np.full(tg.n, 0.5)
+        result = dispatch_year([clean, dirty], load, real)
+        ci = result.ic_metrics.domestic_marginal_ci_g_per_kwh
+        assert ci.min() >= -1e-9
+        # Dirtiest unit: 0.34/0.40 * 1000 = 850 gCO\u2082/kWh_e.
+        assert ci.max() <= 850.0 + 1e-6

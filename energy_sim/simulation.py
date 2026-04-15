@@ -125,6 +125,30 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
               timesteps where import dispatch reached the effective NTC
               ceiling (availability-derated), shape ``(n_runs, n_links)``,
               in percent.
+            - ``'import_hours'`` (np.ndarray): Hours per year in net-import
+              state per link, shape ``(n_runs, n_links)``, in hours.
+            - ``'export_hours'`` (np.ndarray): Hours per year in net-export
+              state per link, shape ``(n_runs, n_links)``, in hours.
+            - ``'import_energy_mwh'`` (np.ndarray): Gross import volume per
+              run per link, shape ``(n_runs, n_links)``, in MWh.
+            - ``'export_energy_mwh'`` (np.ndarray): Gross export volume per
+              run per link, shape ``(n_runs, n_links)``, in MWh.
+            - ``'total_economic_benefit_eur'`` (np.ndarray): Congestion-rent
+              economic benefit per link over the year, shape
+              ``(n_runs, n_links)``, in EUR. Always ≥ 0.
+            - ``'total_co2_benefit_tons'`` (np.ndarray): Signed CO₂ benefit
+              (positive = avoided emissions) per link over the year, shape
+              ``(n_runs, n_links)``, in tonnes. Can be negative when
+              importing from a dirtier foreign mix.
+            - ``'economic_benefit_monthly_eur'`` (np.ndarray): Monthly
+              economic benefit, shape ``(n_runs, n_links, 12)``, in EUR.
+            - ``'co2_benefit_monthly_tons'`` (np.ndarray): Monthly CO₂
+              benefit (signed), shape ``(n_runs, n_links, 12)``, in tonnes.
+            - ``'carbon_intensity_consumption'`` (np.ndarray): Consumption-
+              based carbon intensity (domestic emissions plus signed
+              attribution of cross-border flows divided by load), shape
+              ``(n_runs,)``, in gCO₂/kWh. Always populated; equals
+              ``carbon_intensity`` when no interconnections are active.
     """
     tg = TimeGrid()
     if holiday_calendar is not None:
@@ -183,6 +207,23 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
     imported_emissions_tons_rows = []
     foreign_price_mean_rows = []
     ntc_import_saturation_rows = []
+    # New per-link metrics from InterconnectionMetrics (Phase 6 follow-up).
+    # Monthly aggregates are kept per run so the caller can derive both
+    # year-on-year variability and seasonal patterns without storing the
+    # full 35040-step granularity (~42 MB per metric per run).
+    import_hours_rows = []
+    export_hours_rows = []
+    import_energy_mwh_rows = []
+    export_energy_mwh_rows = []
+    total_econ_benefit_rows = []
+    total_co2_benefit_rows = []
+    econ_benefit_monthly_rows = []
+    co2_benefit_monthly_rows = []
+    # Consumption-based carbon intensity: always populated, equal to
+    # territorial when no links are active. Tracks how cross-border
+    # attribution shifts Italy's footprint relative to the IPCC
+    # territorial figure already exposed in ``carbon_intensity``.
+    carbon_intensity_consumption = []
 
     for run in range(n_runs):
         # RNG separation: derive three independent streams from a single
@@ -274,12 +315,76 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
                 np.zeros(0))
             ntc_import_saturation_rows.append(sat_pct)
 
+            # ── New per-link metrics (InterconnectionMetrics) ──────────
+            # dispatch_year() attaches an ic_metrics object when at least
+            # one interconnection is active. We promote its annual totals
+            # into per-run rows and aggregate the per-qh series to monthly
+            # matrices: full-series retention would be (n_runs, n_links,
+            # 35040) ≈ 42 MB per metric per 100 runs per link, which is
+            # unnecessary for the charts the user asked for.
+            icm = result.ic_metrics
+            import_hours_rows.append(icm.import_hours)
+            export_hours_rows.append(icm.export_hours)
+            import_energy_mwh_rows.append(icm.import_energy_mwh)
+            export_energy_mwh_rows.append(icm.export_energy_mwh)
+            total_econ_benefit_rows.append(icm.total_economic_benefit_eur)
+            total_co2_benefit_rows.append(icm.total_co2_benefit_tons)
+
+            # Monthly aggregation: sum per-qh values inside each calendar
+            # month, producing (n_links, 12) matrices per run. Stacking
+            # yields (n_runs, n_links, 12) after the loop.
+            econ_monthly = np.zeros((n_links, 12))
+            co2_monthly = np.zeros((n_links, 12))
+            for m in range(1, 13):
+                mask = tg.month == m
+                econ_monthly[:, m - 1] = (
+                    icm.economic_benefit_eur_qh[:, mask].sum(axis=1))
+                co2_monthly[:, m - 1] = (
+                    icm.co2_benefit_tons_qh[:, mask].sum(axis=1))
+            econ_benefit_monthly_rows.append(econ_monthly)
+            co2_benefit_monthly_rows.append(co2_monthly)
+
+        # ── Consumption-based carbon intensity ────────────────────────
+        # Attribute cross-border emissions to the consuming jurisdiction:
+        # imports add their foreign CI × volume, exports subtract our
+        # domestic marginal CI × volume. Without interconnections the
+        # consumption-based figure collapses onto the territorial one,
+        # which preserves backward compatibility for callers that read
+        # this key unconditionally.
+        # Denominator intentionally aligned with the territorial CI
+        # above: in the no-link case the two metrics must coincide
+        # numerically, not just conceptually. Any residual difference
+        # between load.sum() and result.power.sum() (curtailment +
+        # unserved) would otherwise leak into the "consumption" figure
+        # even when there are no cross-border flows to attribute.
+        if has_ic:
+            imported_emis_tons = result.emissions_imported_tons.sum()
+            # Exports carry away emissions at the domestic marginal CI.
+            # export_power is p.u.·qh. Tons = pu·qh × P_BASE(GW) ×
+            # 0.25(h) × CI(g/kWh) with the usual 10⁶/10⁻⁶ cancellation.
+            marg_ci = result.ic_metrics.domestic_marginal_ci_g_per_kwh
+            exported_emis_tons = (
+                export_power * 0.25 * P_BASE * marg_ci[np.newaxis, :]
+            ).sum()
+            cons_emis_grams = (
+                run_total_emissions - exported_emis_tons + imported_emis_tons
+            ) * 1e6
+        else:
+            cons_emis_grams = run_total_emissions * 1e6
+        ci_cons = (cons_emis_grams / total_energy_kwh
+                   if total_energy_kwh > 0 else 0.0)
+        carbon_intensity_consumption.append(ci_cons)
+
     emissions_by_tech = {k: np.array(v) for k, v in emissions_by_tech_lists.items()}
 
     # Per-link aggregates: stack rows or return empty arrays for uniform shape
     def _stack_or_empty(rows):
         return (np.stack(rows, axis=0) if rows
                 else np.zeros((n_runs, n_links)))
+
+    def _stack_or_empty_monthly(rows):
+        return (np.stack(rows, axis=0) if rows
+                else np.zeros((n_runs, n_links, 12)))
 
     return {
         'avg_price': np.array(avg_prices),
@@ -288,6 +393,7 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
         'avg_inertia': np.array(avg_inertia),
         'total_emissions': np.array(total_emissions),
         'carbon_intensity': np.array(carbon_intensity),
+        'carbon_intensity_consumption': np.array(carbon_intensity_consumption),
         'emissions_by_tech': emissions_by_tech,
         'interconnection_names': ic_names,
         'net_import_twh': _stack_or_empty(net_import_twh_rows),
@@ -296,6 +402,16 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
         'imported_emissions_tons': _stack_or_empty(imported_emissions_tons_rows),
         'foreign_price_mean': _stack_or_empty(foreign_price_mean_rows),
         'ntc_import_saturation_pct': _stack_or_empty(ntc_import_saturation_rows),
+        'import_hours': _stack_or_empty(import_hours_rows),
+        'export_hours': _stack_or_empty(export_hours_rows),
+        'import_energy_mwh': _stack_or_empty(import_energy_mwh_rows),
+        'export_energy_mwh': _stack_or_empty(export_energy_mwh_rows),
+        'total_economic_benefit_eur': _stack_or_empty(total_econ_benefit_rows),
+        'total_co2_benefit_tons': _stack_or_empty(total_co2_benefit_rows),
+        'economic_benefit_monthly_eur':
+            _stack_or_empty_monthly(econ_benefit_monthly_rows),
+        'co2_benefit_monthly_tons':
+            _stack_or_empty_monthly(co2_benefit_monthly_rows),
     }
 
 

@@ -157,6 +157,97 @@ class TestRunMonteCarlo:
         assert r['avg_price'][0] > 0
 
 
+class TestInterconnectionAggregates:
+    """Monte-Carlo-level aggregates of the Phase 6 follow-up metrics.
+
+    Exercises the per-link arrays that :func:`run_monte_carlo` fills in
+    from each dispatched :class:`~energy_sim.dispatch.InterconnectionMetrics`
+    and the consumption-based carbon-intensity series. Keeps the run
+    count low (2 MC runs) so it executes in the fast test tier.
+    """
+
+    def _run_with_links(self, n_runs=2):
+        """Run a short MC with the full Italian interconnection preset."""
+        from energy_sim.config import (
+            INTERCONNECTIONS, PRICE_AREAS, PRICE_AREA_CORRELATIONS,
+            CO2_SCENARIOS,
+        )
+        return run_monte_carlo(
+            ITALIAN_MIX, GAS_SCENARIOS['base'],
+            coal_scenario=COAL_SCENARIOS['base'],
+            co2_scenario=CO2_SCENARIOS['base'],
+            n_runs=n_runs, seed=42,
+            interconnections_cfg=INTERCONNECTIONS,
+            price_areas_cfg=PRICE_AREAS,
+            price_area_correlations=PRICE_AREA_CORRELATIONS,
+        )
+
+    def test_new_aggregates_shape(self):
+        """All new per-link arrays must have shape ``(n_runs, n_links)``
+        and monthly aggregates ``(n_runs, n_links, 12)``. Catches
+        accidental row/column swaps or missing stacks.
+        """
+        r = self._run_with_links(n_runs=2)
+        n_links = len(r['interconnection_names'])
+        assert r['import_hours'].shape == (2, n_links)
+        assert r['export_hours'].shape == (2, n_links)
+        assert r['import_energy_mwh'].shape == (2, n_links)
+        assert r['export_energy_mwh'].shape == (2, n_links)
+        assert r['total_economic_benefit_eur'].shape == (2, n_links)
+        assert r['total_co2_benefit_tons'].shape == (2, n_links)
+        assert r['economic_benefit_monthly_eur'].shape == (2, n_links, 12)
+        assert r['co2_benefit_monthly_tons'].shape == (2, n_links, 12)
+        assert r['carbon_intensity_consumption'].shape == (2,)
+
+    def test_monthly_sums_match_annual_totals(self):
+        """Summing the 12 monthly slots must reproduce the annual totals
+        to floating-point precision. Guards the aggregation bucketing
+        against off-by-one in the month-mask loop.
+        """
+        r = self._run_with_links(n_runs=2)
+        econ_from_monthly = r['economic_benefit_monthly_eur'].sum(axis=2)
+        co2_from_monthly = r['co2_benefit_monthly_tons'].sum(axis=2)
+        np.testing.assert_allclose(econ_from_monthly,
+                                   r['total_economic_benefit_eur'],
+                                   rtol=1e-10, atol=1e-3)
+        np.testing.assert_allclose(co2_from_monthly,
+                                   r['total_co2_benefit_tons'],
+                                   rtol=1e-10, atol=1e-6)
+
+    def test_economic_benefit_non_negative_annual(self):
+        """Annual congestion-rent benefit per link per run must be
+        non-negative, matching the per-qh invariant validated in the
+        dispatch tests.
+        """
+        r = self._run_with_links(n_runs=2)
+        assert (r['total_economic_benefit_eur'] >= -1e-6).all()
+
+    def test_consumption_ci_defaults_to_territorial_without_links(self):
+        """When no interconnections are active the consumption-based CI
+        must coincide with the territorial one (equivalent to zero
+        cross-border attribution).
+        """
+        r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'],
+                            n_runs=2, seed=42)
+        np.testing.assert_allclose(r['carbon_intensity_consumption'],
+                                   r['carbon_intensity'],
+                                   rtol=1e-10, atol=1e-10)
+
+    def test_consumption_ci_reasonable_with_links(self):
+        """With the Italian preset (net importer of mixed-CI flows) the
+        consumption-based CI must be finite, positive, and differ from
+        the territorial figure by at most a physically plausible margin.
+        """
+        r = self._run_with_links(n_runs=2)
+        ci_t = r['carbon_intensity']
+        ci_c = r['carbon_intensity_consumption']
+        assert np.all(np.isfinite(ci_c))
+        assert np.all(ci_c > 0)
+        # 100 g/kWh is a very loose envelope — real shift is ~20 g/kWh.
+        # The bound catches unit-scale errors (e.g. kg/MWh vs g/kWh).
+        assert np.all(np.abs(ci_c - ci_t) < 100)
+
+
 @pytest.mark.slow
 class TestSweepTechnology:
     """Verify the technology penetration sweep utility."""

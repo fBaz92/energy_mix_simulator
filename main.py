@@ -60,6 +60,9 @@ from energy_sim.visualization import (
     plot_fuel_price_heatmap_2d,
     plot_interconnection_flows_summary, plot_flow_duration_curves,
     plot_price_convergence, plot_dispatch_with_imports,
+    plot_import_export_hours, plot_energy_bars_by_country,
+    plot_economic_benefit_monthly, plot_co2_benefit_monthly,
+    plot_generation_mix_pie,
 )
 
 
@@ -375,16 +378,25 @@ def main() -> None:
     ic_price = ic_mc['avg_price'].mean()
     base_ci = base_mc['carbon_intensity'].mean()
     ic_ci = ic_mc['carbon_intensity'].mean()
+    ic_ci_cons = ic_mc['carbon_intensity_consumption'].mean()
     total_net_import = ic_mc['net_import_twh'].sum(axis=1).mean()
     total_imported_emis = ic_mc['imported_emissions_tons'].sum(axis=1).mean()
+    total_econ_benefit = ic_mc['total_economic_benefit_eur'].sum(axis=1).mean()
+    total_co2_benefit = ic_mc['total_co2_benefit_tons'].sum(axis=1).mean()
 
     print(f"  Domestic price:   {base_price:.2f} → {ic_price:.2f} "
           f"EUR/MWh  ({ic_price - base_price:+.2f})")
     print(f"  Carbon intensity: {base_ci:.0f} → {ic_ci:.0f} gCO₂/kWh  "
           f"(territorial, domestic only)")
+    print(f"  CI consumption:   {ic_ci_cons:.0f} gCO₂/kWh "
+          f"(\u0394 vs territorial: {ic_ci_cons - ic_ci:+.1f})")
     print(f"  Net imports:      {total_net_import:.1f} TWh/yr")
     print(f"  Imported CO₂:     {total_imported_emis / 1e6:.2f} Mt/yr "
           f"(consumption-based, embedded in imports)")
+    print(f"  Economic benefit: {total_econ_benefit / 1e9:.2f} B\u20ac/yr "
+          f"(congestion-rent proxy, all links)")
+    print(f"  CO\u2082 benefit:     {total_co2_benefit / 1e6:+.2f} Mt/yr "
+          f"(signed; + = avoided vs domestic counterfactual)")
 
     # Per-link summary table
     print("\n  Per-link flows (MC averages):")
@@ -404,6 +416,24 @@ def main() -> None:
         ic_mc,
         os.path.join(out_dir, 'ic_flows_summary.png'),
     )
+
+    # Phase 6 follow-up: import/export hours, energy by country,
+    # economic + CO\u2082 benefit (monthly stacks), and generation mix pie.
+    # These plots close out the cross-border metrics requested by the
+    # user: utilisation factor per link, TWh traded, economic welfare
+    # captured under the congestion-rent convention, and signed CO\u2082
+    # impact \u2014 all Monte Carlo averages.
+    plot_import_export_hours(
+        ic_mc, os.path.join(out_dir, 'ic_hours.png'))
+    plot_energy_bars_by_country(
+        ic_mc, os.path.join(out_dir, 'ic_energy_by_country.png'))
+    plot_economic_benefit_monthly(
+        ic_mc, os.path.join(out_dir, 'ic_economic_benefit_monthly.png'))
+    plot_co2_benefit_monthly(
+        ic_mc, os.path.join(out_dir, 'ic_co2_benefit_monthly.png'))
+    plot_generation_mix_pie(
+        ic_mc, ITALIAN_MIX,
+        os.path.join(out_dir, 'generation_mix_pie.png'))
 
     # For flow-duration / price-convergence / dispatch-day plots we need
     # a single dispatched year (the MC loop discards per-run DispatchResults

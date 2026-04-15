@@ -35,12 +35,74 @@ from energy_sim.interconnections import (
 
 
 @dataclass
+class InterconnectionMetrics:
+    """Per-link cross-border metrics derived from a completed dispatch.
+
+    Uses the **congestion-rent** approximation for the economic benefit:
+    every infra-marginal import clears at the domestic marginal price and
+    is assumed not to perturb that price when removed. Under this
+    first-order assumption the economic benefit is the volume times the
+    gap between the domestic clearing price and the import SRMC
+    (symmetrically for exports), and is ≥ 0 by construction of the merit
+    order. This matches the standard TSO definition of cross-border
+    welfare and avoids the 2× cost of re-dispatching the closed system.
+
+    The CO₂ benefit uses the **load-weighted emission intensity of the
+    domestic fleet** at each quarter-hour as the counterfactual intensity
+    that each imported/exported MWh would have replaced. A positive
+    value means the link reduced system emissions (importing from a
+    cleaner grid or exporting to a dirtier one); a negative value means
+    the opposite. Integrating over the year gives a consumption-based
+    carbon budget adjustment.
+
+    Attributes:
+        import_hours (np.ndarray): Hours per year in net-import state
+            (net_flow > 0), shape ``(n_interconnections,)``.
+        export_hours (np.ndarray): Hours per year in net-export state,
+            shape ``(n_interconnections,)``.
+        import_energy_mwh (np.ndarray): Gross annual import volume per
+            link in MWh, shape ``(n_interconnections,)``.
+        export_energy_mwh (np.ndarray): Gross annual export volume per
+            link in MWh, shape ``(n_interconnections,)``.
+        economic_benefit_eur_qh (np.ndarray): Per-link, per-quarter-hour
+            economic benefit in EUR, shape ``(n_interconnections, 35040)``.
+            Sum of import and export contributions; each contribution is
+            ≥ 0 under the congestion-rent convention.
+        co2_benefit_tons_qh (np.ndarray): Per-link, per-quarter-hour
+            CO₂ benefit in tonnes, shape ``(n_interconnections, 35040)``.
+            Can be negative on quarter-hours where we import from an
+            area dirtier than the domestic marginal mix.
+        total_economic_benefit_eur (np.ndarray): Annual sum of
+            :attr:`economic_benefit_eur_qh` per link, shape
+            ``(n_interconnections,)``.
+        total_co2_benefit_tons (np.ndarray): Annual sum of
+            :attr:`co2_benefit_tons_qh` per link, shape
+            ``(n_interconnections,)``.
+        domestic_marginal_ci_g_per_kwh (np.ndarray): Load-weighted
+            emission intensity of the domestic fleet per quarter-hour,
+            shape ``(35040,)``, in gCO₂ per kWh_e. Zero on quarter-hours
+            where no domestic unit is online (e.g. total unserved energy
+            scenarios).
+    """
+
+    import_hours: np.ndarray
+    export_hours: np.ndarray
+    import_energy_mwh: np.ndarray
+    export_energy_mwh: np.ndarray
+    economic_benefit_eur_qh: np.ndarray
+    co2_benefit_tons_qh: np.ndarray
+    total_economic_benefit_eur: np.ndarray
+    total_co2_benefit_tons: np.ndarray
+    domestic_marginal_ci_g_per_kwh: np.ndarray
+
+
+@dataclass
 class DispatchResult:
     """Results of a full-year merit-order dispatch.
 
     All power arrays are in per-unit of system base. All prices are in
-    EUR/MWh (electrical). All emissions are in physical units (kg CO₂
-    per quarter-hour).
+    EUR/MWh (electrical). All emissions are in tonnes CO₂ per
+    quarter-hour (territorial) or per link (consumption-based).
 
     Attributes:
         power (np.ndarray): Dispatched power matrix of shape
@@ -64,8 +126,10 @@ class DispatchResult:
             ``'solar'``, ``'import'``, …). Used by downstream aggregators
             to separate territorial from consumption-based accounting.
         emissions (np.ndarray): Territorial CO₂ emissions, shape
-            ``(n_units, 35040)``, in kg CO₂ per quarter-hour. Rows for
-            imports are zero under the IPCC territorial convention.
+            ``(n_units, 35040)``, in tonnes CO₂ per quarter-hour.
+            Dimensional analysis: power_pu · P_BASE(GW) · 0.25(h) · 1000
+            (MW/GW) · ef(tCO₂/MWh_th) / η = tCO₂. Rows for imports are
+            zero under the IPCC territorial convention.
         net_import_pu (np.ndarray): Signed cross-border flow per
             interconnection, shape ``(n_interconnections, 35040)``.
             Positive values mean energy flowing *into* the domestic
@@ -101,6 +165,7 @@ class DispatchResult:
         default_factory=lambda: np.zeros((0, 0)))
     emissions_imported_tons: np.ndarray = field(
         default_factory=lambda: np.zeros((0, 0)))
+    ic_metrics: 'InterconnectionMetrics | None' = None
 
 
 def dispatch_year(
@@ -334,6 +399,74 @@ def dispatch_year(
     gen_names = [u.name for u in units]
     gen_types = [getattr(u, 'gen_type', 'unknown') for u in units]
 
+    # ── Interconnection metrics (congestion-rent method) ──────────────
+    # Computed only when at least one interconnection is active. See
+    # :class:`InterconnectionMetrics` for the methodology.
+    if n_ic > 0:
+        # Load-weighted domestic marginal CI in gCO₂/kWh_e.
+        # ef[tCO₂/MWh_th] / η[MWh_e/MWh_th] = tCO₂/MWh_e = kg/kWh_e,
+        # so multiplying by 1000 yields g/kWh_e.
+        dom_power = power[:n_domestic, :]                # (n_domestic, T)
+        ef_g_per_kwh_dom = (
+            emission_factors[:n_domestic] / safe_eff[:n_domestic] * 1000.0)
+        total_dom_power = dom_power.sum(axis=0)          # (T,)
+        weighted_g_per_kwh = (
+            dom_power * ef_g_per_kwh_dom[:, np.newaxis]).sum(axis=0)  # (T,)
+        marg_ci = np.where(
+            total_dom_power > 1e-12,
+            weighted_g_per_kwh / np.maximum(total_dom_power, 1e-12),
+            0.0,
+        )
+
+        # Economic benefit per qh per link in EUR.
+        # pu × P_BASE(GW) × 0.25(h) × 1000(MW/GW) × Δprice(€/MWh) = €
+        srmc_import_path = np.array(
+            [r.import_srmc_path for r in interconnection_realizations])
+        floor_export_path = np.array(
+            [r.export_floor_path for r in interconnection_realizations])
+
+        econ_import_eur = (import_power * P_BASE * 0.25 * 1000
+                           * (marginal_price - srmc_import_path))
+        econ_export_eur = (export_power * P_BASE * 0.25 * 1000
+                           * (floor_export_path - marginal_price))
+        # Clamp tiny negatives from floating-point noise on borderline qh.
+        econ_import_eur = np.maximum(econ_import_eur, 0.0)
+        econ_export_eur = np.maximum(econ_export_eur, 0.0)
+        economic_benefit_eur_qh = econ_import_eur + econ_export_eur
+
+        # CO₂ benefit per qh per link in tonnes.
+        # pu × P_BASE(GW) × 0.25(h) × CI(g/kWh) → pu·tons (see
+        # emissions_imported_tons docstring for the full derivation).
+        # Import: benefit is avoided domestic emissions - incurred foreign.
+        # Export: benefit is avoided foreign emissions - incurred domestic.
+        co2_import_tons = (import_power * P_BASE * 0.25
+                           * (marg_ci - ci_g_per_kwh[:, np.newaxis]))
+        co2_export_tons = (export_power * P_BASE * 0.25
+                           * (ci_g_per_kwh[:, np.newaxis] - marg_ci))
+        co2_benefit_tons_qh = co2_import_tons + co2_export_tons
+
+        # Hours and energy aggregates
+        dt_h = 0.25
+        eps = 1e-9
+        import_hours = (import_power > eps).sum(axis=1) * dt_h
+        export_hours = (export_power > eps).sum(axis=1) * dt_h
+        import_energy_mwh = import_power.sum(axis=1) * P_BASE * 1000 * dt_h
+        export_energy_mwh = export_power.sum(axis=1) * P_BASE * 1000 * dt_h
+
+        ic_metrics = InterconnectionMetrics(
+            import_hours=import_hours,
+            export_hours=export_hours,
+            import_energy_mwh=import_energy_mwh,
+            export_energy_mwh=export_energy_mwh,
+            economic_benefit_eur_qh=economic_benefit_eur_qh,
+            co2_benefit_tons_qh=co2_benefit_tons_qh,
+            total_economic_benefit_eur=economic_benefit_eur_qh.sum(axis=1),
+            total_co2_benefit_tons=co2_benefit_tons_qh.sum(axis=1),
+            domestic_marginal_ci_g_per_kwh=marg_ci,
+        )
+    else:
+        ic_metrics = None
+
     return DispatchResult(
         power=power,
         marginal_price=marginal_price,
@@ -347,4 +480,5 @@ def dispatch_year(
         interconnection_names=[r.name for r in interconnection_realizations],
         foreign_prices=foreign_prices,
         emissions_imported_tons=emissions_imported_tons,
+        ic_metrics=ic_metrics,
     )
