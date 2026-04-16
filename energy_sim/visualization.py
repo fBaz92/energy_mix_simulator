@@ -5,6 +5,10 @@ All plotting functions accept pre-computed data and save figures to disk.
 Uses the ``Agg`` backend for headless rendering.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -14,6 +18,9 @@ from energy_sim.config import QUARTERS_PER_DAY, P_PEAK_GW, N_MC_RUNS
 from energy_sim.generators import Generator, CarbonPriceModel
 from energy_sim.models import TimeGrid
 from energy_sim.dispatch import dispatch_year
+
+if TYPE_CHECKING:
+    from energy_sim.simulation import MonteCarloResult
 
 
 def plot_heatmap(price_matrix: np.ndarray, penetrations_pct: np.ndarray,
@@ -490,7 +497,7 @@ def plot_dispatch_day(generators: list[Generator], time_grid: TimeGrid,
 # ── Interconnection visualizations ──────────────────────────────────────
 
 
-def plot_interconnection_flows_summary(mc_results: dict,
+def plot_interconnection_flows_summary(mc_results: MonteCarloResult,
                                         out_path: str) -> None:
     """Summary bar chart of yearly cross-border flows per interconnection.
 
@@ -508,7 +515,7 @@ def plot_interconnection_flows_summary(mc_results: dict,
             ``'foreign_price_mean'``, ``'ntc_import_saturation_pct'``.
         out_path: File path to save the figure (PNG).
     """
-    names = mc_results['interconnection_names']
+    names = mc_results.interconnection_names
     if not names:
         print(f"No interconnections — skipping {out_path}")
         return
@@ -517,12 +524,12 @@ def plot_interconnection_flows_summary(mc_results: dict,
     x = np.arange(n)
     width = 0.27
 
-    imp = mc_results['import_gross_twh'].mean(axis=0)
-    exp = mc_results['export_gross_twh'].mean(axis=0)
-    net = mc_results['net_import_twh'].mean(axis=0)
-    net_std = mc_results['net_import_twh'].std(axis=0)
-    fprice = mc_results['foreign_price_mean'].mean(axis=0)
-    sat = mc_results['ntc_import_saturation_pct'].mean(axis=0)
+    imp = mc_results.import_gross_twh.mean(axis=0)
+    exp = mc_results.export_gross_twh.mean(axis=0)
+    net = mc_results.net_import_twh.mean(axis=0)
+    net_std = mc_results.net_import_twh.std(axis=0)
+    fprice = mc_results.foreign_price_mean.mean(axis=0)
+    sat = mc_results.ntc_import_saturation_pct.mean(axis=0)
 
     fig, ax1 = plt.subplots(figsize=(12, 5.5))
 
@@ -747,7 +754,7 @@ def plot_dispatch_with_imports(generators: list,
     print(f"Saved: {out_path}")
 
 
-def plot_import_export_hours(mc_results: dict, out_path: str) -> None:
+def plot_import_export_hours(mc_results: MonteCarloResult, out_path: str) -> None:
     """Horizontal bar chart of yearly import vs export hours per link.
 
     For each interconnection shows two stacked horizontal bars: blue for
@@ -763,13 +770,13 @@ def plot_import_export_hours(mc_results: dict, out_path: str) -> None:
             ``'export_hours'``.
         out_path: File path to save the figure (PNG).
     """
-    names = mc_results['interconnection_names']
+    names = mc_results.interconnection_names
     if not names:
         print(f"No interconnections — skipping {out_path}")
         return
 
-    imp_h = mc_results['import_hours'].mean(axis=0)
-    exp_h = mc_results['export_hours'].mean(axis=0)
+    imp_h = mc_results.import_hours.mean(axis=0)
+    exp_h = mc_results.export_hours.mean(axis=0)
     idle_h = np.maximum(8760.0 - imp_h - exp_h, 0.0)
 
     y = np.arange(len(names))
@@ -797,7 +804,7 @@ def plot_import_export_hours(mc_results: dict, out_path: str) -> None:
     print(f"Saved: {out_path}")
 
 
-def plot_energy_bars_by_country(mc_results: dict, out_path: str) -> None:
+def plot_energy_bars_by_country(mc_results: MonteCarloResult, out_path: str) -> None:
     """Grouped bar chart of yearly import and export energy per link.
 
     Shows gross import (positive) and gross export (negative) per link in
@@ -813,13 +820,13 @@ def plot_energy_bars_by_country(mc_results: dict, out_path: str) -> None:
             converted to TWh for plotting.
         out_path: File path to save the figure (PNG).
     """
-    names = mc_results['interconnection_names']
+    names = mc_results.interconnection_names
     if not names:
         print(f"No interconnections — skipping {out_path}")
         return
 
-    imp_twh = mc_results['import_energy_mwh'] / 1e6
-    exp_twh = mc_results['export_energy_mwh'] / 1e6
+    imp_twh = mc_results.import_energy_mwh / 1e6
+    exp_twh = mc_results.export_energy_mwh / 1e6
 
     imp_mean = imp_twh.mean(axis=0)
     imp_std = imp_twh.std(axis=0)
@@ -849,7 +856,7 @@ def plot_energy_bars_by_country(mc_results: dict, out_path: str) -> None:
     print(f"Saved: {out_path}")
 
 
-def plot_economic_benefit_monthly(mc_results: dict, out_path: str) -> None:
+def plot_economic_benefit_monthly(mc_results: MonteCarloResult, out_path: str) -> None:
     """Monthly congestion-rent economic benefit stacked by interconnection.
 
     Sums the per-quarter-hour economic benefits into calendar months and
@@ -864,13 +871,13 @@ def plot_economic_benefit_monthly(mc_results: dict, out_path: str) -> None:
             12)``) and ``'total_economic_benefit_eur'``.
         out_path: File path to save the figure (PNG).
     """
-    names = mc_results['interconnection_names']
+    names = mc_results.interconnection_names
     if not names:
         print(f"No interconnections — skipping {out_path}")
         return
 
-    monthly = mc_results['economic_benefit_monthly_eur'].mean(axis=0) / 1e6
-    totals = mc_results['total_economic_benefit_eur'].mean(axis=0) / 1e6
+    monthly = mc_results.economic_benefit_monthly_eur.mean(axis=0) / 1e6
+    totals = mc_results.total_economic_benefit_eur.mean(axis=0) / 1e6
 
     months = np.arange(1, 13)
     fig, ax = plt.subplots(figsize=(11, 5.5))
@@ -895,7 +902,7 @@ def plot_economic_benefit_monthly(mc_results: dict, out_path: str) -> None:
     print(f"Saved: {out_path}")
 
 
-def plot_co2_benefit_monthly(mc_results: dict, out_path: str) -> None:
+def plot_co2_benefit_monthly(mc_results: MonteCarloResult, out_path: str) -> None:
     """Monthly CO\u2082 benefit (signed) per interconnection as grouped bars.
 
     Groups (rather than stacks) because the metric is *signed*: stacking
@@ -911,13 +918,13 @@ def plot_co2_benefit_monthly(mc_results: dict, out_path: str) -> None:
             ``'co2_benefit_monthly_tons'`` and ``'total_co2_benefit_tons'``.
         out_path: File path to save the figure (PNG).
     """
-    names = mc_results['interconnection_names']
+    names = mc_results.interconnection_names
     if not names:
         print(f"No interconnections — skipping {out_path}")
         return
 
-    monthly = mc_results['co2_benefit_monthly_tons'].mean(axis=0) / 1e3  # kt
-    totals = mc_results['total_co2_benefit_tons'].mean(axis=0) / 1e3
+    monthly = mc_results.co2_benefit_monthly_tons.mean(axis=0) / 1e3  # kt
+    totals = mc_results.total_co2_benefit_tons.mean(axis=0) / 1e3
 
     n_links = len(names)
     months = np.arange(12)
@@ -946,7 +953,7 @@ def plot_co2_benefit_monthly(mc_results: dict, out_path: str) -> None:
     print(f"Saved: {out_path}")
 
 
-def plot_generation_mix_pie(mc_results: dict, mix_config: dict,
+def plot_generation_mix_pie(mc_results: MonteCarloResult, mix_config: dict,
                             out_path: str) -> None:
     """Pie chart of the annual domestic energy generation by technology.
 
@@ -974,7 +981,7 @@ def plot_generation_mix_pie(mc_results: dict, mix_config: dict,
         'nuclear': 0.90, 'geothermal': 0.85, 'biomass': 0.60,
     }
 
-    emissions_by_tech = mc_results['emissions_by_tech']
+    emissions_by_tech = mc_results.emissions_by_tech
     tech_twh: dict[str, float] = {}
     is_estimated: dict[str, bool] = {}
 
@@ -1083,7 +1090,7 @@ def plot_storage_soc_timeseries(
     print(f"Saved: {out_path}")
 
 
-def plot_storage_soc_monthly(mc_results: dict, out_path: str) -> None:
+def plot_storage_soc_monthly(mc_results: MonteCarloResult, out_path: str) -> None:
     """Monthly average SOC bar chart from Monte Carlo results.
 
     Shows one bar per month per storage unit (grouped), with error bars
@@ -1097,12 +1104,12 @@ def plot_storage_soc_monthly(mc_results: dict, out_path: str) -> None:
             (shape ``(n_runs, n_storage, 12)``).
         out_path: File path to save the figure (PNG).
     """
-    names = mc_results['storage_names']
+    names = mc_results.storage_names
     if not names:
         print(f"No storage units \u2014 skipping {out_path}")
         return
 
-    monthly = mc_results['storage_monthly_avg_soc']  # (n_runs, n_s, 12)
+    monthly = mc_results.storage_monthly_avg_soc  # (n_runs, n_s, 12)
     n_s = len(names)
     months = np.arange(12)
     month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',

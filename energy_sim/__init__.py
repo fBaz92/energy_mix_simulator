@@ -19,4 +19,7 @@ from energy_sim.config import ITALIAN_MIX, GAS_SCENARIOS, P_PEAK_GW, N_MC_RUNS
 from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import Generator, build_generators
 from energy_sim.dispatch import dispatch_year, DispatchResult
-from energy_sim.simulation import run_monte_carlo, sweep_technology, build_sensitivity_heatmap
+from energy_sim.simulation import (
+    SimulationConfig, MonteCarloResult,
+    run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
+)

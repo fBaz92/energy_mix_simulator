@@ -5,7 +5,19 @@ Provides the core simulation loop (:func:`run_monte_carlo`) that repeatedly
 builds generators, generates stochastic paths, dispatches, and aggregates
 price statistics. Also provides sweep utilities for sensitivity analysis
 across technology penetrations and gas price scenarios.
+
+Two dataclasses define the interface:
+
+- :class:`SimulationConfig`: groups all input parameters for a Monte Carlo run
+  (mix, fuel scenarios, load settings, interconnections, storage).
+- :class:`MonteCarloResult`: typed container for all output arrays, replacing
+  the previous untyped dict. Fields are accessed as attributes
+  (e.g. ``result.avg_price``) with documented shapes and units.
 """
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 
 import numpy as np
 from copy import deepcopy
@@ -28,7 +40,175 @@ from energy_sim.interconnections import (
 from energy_sim.storage import build_storage_units
 
 
-def run_monte_carlo(mix_config: dict, gas_scenario: dict,
+# ═══════════════════════════════════════════════════════════════════════════
+# Input / Output dataclasses
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class SimulationConfig:
+    """Groups all input parameters for a Monte Carlo simulation run.
+
+    Collects mix definition, fuel/CO₂ scenario parameters, load profile
+    settings, interconnection topology, and storage configuration into a
+    single object. Every field has a sensible default so that the simplest
+    call is ``SimulationConfig(mix_config=ITALIAN_MIX, gas_scenario=GAS_SCENARIOS['base'])``.
+
+    Attributes:
+        mix_config: Generation mix dictionary (see
+            :data:`~energy_sim.config.ITALIAN_MIX`).
+        gas_scenario: Gas price O-U parameters (keys: ``mu``, ``sigma``,
+            ``theta``).
+        coal_scenario: Coal price O-U parameters. ``None`` → defaults to
+            ``COAL_SCENARIOS['base']`` inside :func:`run_monte_carlo`.
+        co2_scenario: CO₂ price O-U parameters. ``None`` → defaults to
+            ``CO2_SCENARIOS['base']``.
+        n_runs: Number of Monte Carlo years to simulate.
+        seed: Base random seed. Run *i* uses ``seed + i``.
+        load_noise: Standard deviation of multiplicative Gaussian load noise.
+        weekday_factors: Day-of-week load multipliers (0=Monday, 6=Sunday).
+            ``None`` disables weekday modulation.
+        holiday_factor: Load multiplier for public holidays. ``None`` disables.
+        holiday_calendar: Day-of-year indices for public holidays. ``None``
+            disables.
+        interconnections_cfg: Mapping ``name → link_params`` for cross-border
+            exchanges. ``None`` disables interconnections.
+        price_areas_cfg: Mapping ``area_name → price_params``. Required when
+            ``interconnections_cfg`` is supplied.
+        price_area_correlations: Pairwise correlation dict for the foreign
+            price stochastic coupling. Missing pairs default to 0.
+        price_areas_correlated: If ``False``, each foreign price path is
+            simulated independently.
+        enable_ntc_faults: If ``False``, all interconnections use perfect
+            reliability.
+        storage_cfg: Mapping ``name → storage_params`` for battery storage.
+            ``None`` disables storage.
+    """
+
+    mix_config: dict
+    gas_scenario: dict
+    coal_scenario: dict | None = None
+    co2_scenario: dict | None = None
+    n_runs: int = N_MC_RUNS
+    seed: int = RANDOM_SEED
+    load_noise: float = DEFAULT_LOAD_NOISE_SIGMA
+    weekday_factors: dict[int, float] | None = field(
+        default_factory=lambda: WEEKDAY_LOAD_FACTORS)
+    holiday_factor: float | None = HOLIDAY_LOAD_FACTOR
+    holiday_calendar: list[int] | None = field(
+        default_factory=lambda: ITALIAN_HOLIDAYS_DOY)
+    interconnections_cfg: dict[str, dict] | None = None
+    price_areas_cfg: dict[str, dict] | None = None
+    price_area_correlations: dict[tuple[str, str], float] | None = None
+    price_areas_correlated: bool = True
+    enable_ntc_faults: bool = True
+    storage_cfg: dict[str, dict] | None = None
+
+
+@dataclass
+class MonteCarloResult:
+    """Typed container for all Monte Carlo simulation outputs.
+
+    Replaces the previous untyped dict with named, documented fields.
+    All array shapes use ``n`` for the number of MC runs, ``n_links`` for
+    interconnection count, and ``n_storage`` for storage unit count.
+
+    Core fields are always populated. Interconnection and storage fields
+    default to empty arrays / lists when the corresponding feature is
+    disabled, so callers can read them unconditionally.
+    """
+
+    # ── Core (always populated) ───────────────────────────────────────
+    avg_price: np.ndarray
+    """Mean annual electricity price per run, shape ``(n,)``, EUR/MWh."""
+    monthly_prices: np.ndarray
+    """Monthly average prices, shape ``(n, 12)``, EUR/MWh."""
+    curtailment: np.ndarray
+    """Total curtailed energy per run, shape ``(n,)``, p.u.-quarter-hours."""
+    avg_inertia: np.ndarray
+    """Mean system inertia per run, shape ``(n,)``, seconds."""
+
+    # ── Emissions ─────────────────────────────────────────────────────
+    total_emissions: np.ndarray
+    """Total annual CO₂ emissions per run, shape ``(n,)``, tons (territorial)."""
+    carbon_intensity: np.ndarray
+    """Average carbon intensity per run, shape ``(n,)``, gCO₂/kWh (territorial)."""
+    carbon_intensity_consumption: np.ndarray
+    """Consumption-based carbon intensity, shape ``(n,)``, gCO₂/kWh.
+    Equals ``carbon_intensity`` when no interconnections are active."""
+    emissions_by_tech: dict[str, np.ndarray]
+    """Per-technology annual emissions, each value shape ``(n,)``, tons."""
+
+    # ── Interconnections (empty arrays when disabled) ──────────────────
+    interconnection_names: list[str] = field(default_factory=list)
+    """Ordered link names, e.g. ``['IT-FR', 'IT-CH']``."""
+    net_import_twh: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)))
+    """Net imports per run per link, shape ``(n, n_links)``, TWh."""
+    import_gross_twh: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)))
+    """Gross imports per run per link, shape ``(n, n_links)``, TWh."""
+    export_gross_twh: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)))
+    """Gross exports per run per link, shape ``(n, n_links)``, TWh."""
+    imported_emissions_tons: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Consumption-based CO₂ in net imports, shape ``(n, n_links)``, tons."""
+    foreign_price_mean: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Time-average foreign price per link, shape ``(n, n_links)``, EUR/MWh."""
+    ntc_import_saturation_pct: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """NTC saturation share per link, shape ``(n, n_links)``, percent."""
+    import_hours: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)))
+    """Hours/year in net-import state per link, shape ``(n, n_links)``."""
+    export_hours: np.ndarray = field(default_factory=lambda: np.zeros((0, 0)))
+    """Hours/year in net-export state per link, shape ``(n, n_links)``."""
+    import_energy_mwh: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Gross import volume per link, shape ``(n, n_links)``, MWh."""
+    export_energy_mwh: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Gross export volume per link, shape ``(n, n_links)``, MWh."""
+    total_economic_benefit_eur: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Congestion-rent benefit per link, shape ``(n, n_links)``, EUR."""
+    total_co2_benefit_tons: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Signed CO₂ benefit per link, shape ``(n, n_links)``, tonnes."""
+    economic_benefit_monthly_eur: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0, 0)))
+    """Monthly economic benefit, shape ``(n, n_links, 12)``, EUR."""
+    co2_benefit_monthly_tons: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0, 0)))
+    """Monthly CO₂ benefit (signed), shape ``(n, n_links, 12)``, tonnes."""
+
+    # ── Storage (empty arrays when disabled) ──────────────────────────
+    storage_names: list[str] = field(default_factory=list)
+    """Ordered storage unit names."""
+    storage_energy_cycled_mwh: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Total energy discharged per unit per run, shape ``(n, n_storage)``, MWh."""
+    storage_revenue_eur: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Net revenue per unit per run, shape ``(n, n_storage)``, EUR."""
+    storage_equivalent_cycles: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Equivalent full cycles per unit per run, shape ``(n, n_storage)``."""
+    storage_avg_soc: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    """Time-average SOC per unit per run, shape ``(n, n_storage)``."""
+    storage_monthly_avg_soc: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0, 0)))
+    """Monthly average SOC, shape ``(n, n_storage, 12)``."""
+
+    def __getitem__(self, key: str):
+        """Allow dict-style access for backward compatibility.
+
+        Existing code using ``result['avg_price']`` continues to work
+        alongside the preferred ``result.avg_price`` attribute access.
+        """
+        return getattr(self, key)
+
+
+def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
+                    gas_scenario: dict | None = None,
                     coal_scenario: dict | None = None,
                     co2_scenario: dict | None = None,
                     n_runs: int = N_MC_RUNS,
@@ -42,137 +222,77 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
                     price_area_correlations: dict[tuple[str, str], float] | None = None,
                     price_areas_correlated: bool = True,
                     enable_ntc_faults: bool = True,
-                    storage_cfg: dict[str, dict] | None = None) -> dict:
+                    storage_cfg: dict[str, dict] | None = None) -> MonteCarloResult:
     """Run a Monte Carlo simulation of the electricity market.
 
     For each run: builds fresh generators (new stochastic fuel price paths),
     generates a load profile with noise, dispatches via merit order, and
     collects price/curtailment/inertia statistics.
 
+    Can be called in three ways:
+
+    1. **With a SimulationConfig** (preferred for complex setups)::
+
+           cfg = SimulationConfig(mix_config=ITALIAN_MIX,
+                                  gas_scenario=GAS_SCENARIOS['base'],
+                                  n_runs=30)
+           result = run_monte_carlo(cfg)
+
+    2. **With keyword arguments**::
+
+           result = run_monte_carlo(mix_config=ITALIAN_MIX,
+                                    gas_scenario=GAS_SCENARIOS['base'],
+                                    n_runs=30)
+
+    3. **With positional arguments** (backward-compatible)::
+
+           result = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'],
+                                    n_runs=30)
+
     Args:
-        mix_config: Generation mix dictionary (see
-            :data:`~energy_sim.config.ITALIAN_MIX`).
-        gas_scenario: Gas price scenario parameters (keys: ``mu``, ``sigma``,
-            ``theta``).
-        coal_scenario: Coal price scenario parameters. If ``None``, defaults
-            to ``COAL_SCENARIOS['base']``.
-        co2_scenario: CO2 price scenario parameters (keys: ``mu``, ``sigma``,
-            ``theta``). If ``None``, defaults to ``CO2_SCENARIOS['base']``.
-        n_runs: Number of Monte Carlo runs. Defaults to ``N_MC_RUNS``.
-        load_noise: Standard deviation of multiplicative Gaussian load noise.
-            Defaults to ``DEFAULT_LOAD_NOISE_SIGMA`` (0.04).
+        mix_config: Generation mix dictionary, or a :class:`SimulationConfig`
+            instance. When a ``SimulationConfig`` is passed, all other
+            keyword arguments are ignored and the config's fields are used.
+        gas_scenario: Gas price O-U parameters (``mu``, ``sigma``, ``theta``).
+        coal_scenario: Coal price parameters. ``None`` → ``COAL_SCENARIOS['base']``.
+        co2_scenario: CO₂ price parameters. ``None`` → ``CO2_SCENARIOS['base']``.
+        n_runs: Number of Monte Carlo runs.
+        load_noise: Std dev of multiplicative Gaussian load noise.
         seed: Base random seed. Run *i* uses ``seed + i``.
-            Defaults to ``RANDOM_SEED``.
-        weekday_factors: Day-of-week load multipliers (0=Monday, 6=Sunday).
-            Defaults to ``WEEKDAY_LOAD_FACTORS`` (reduced weekend demand).
-            Pass ``None`` to disable weekday modulation.
-        holiday_factor: Load multiplier for public holidays, applied on top
-            of weekday factors. Defaults to ``HOLIDAY_LOAD_FACTOR`` (0.80).
-            Pass ``None`` to disable holiday modulation.
-        holiday_calendar: List of day-of-year indices (0-364) for public
-            holidays. Defaults to ``ITALIAN_HOLIDAYS_DOY``.
-            Pass ``None`` to disable holiday modulation.
-        interconnections_cfg: Optional mapping ``name -> link_params``
-            (see :data:`~energy_sim.config.INTERCONNECTIONS`). When ``None``
-            or empty, the simulation runs without cross-border exchanges —
-            fully backward compatible. When supplied, must be accompanied by
-            ``price_areas_cfg``.
-        price_areas_cfg: Optional mapping ``area_name -> price_params``
-            (see :data:`~energy_sim.config.PRICE_AREAS`). Required when
-            ``interconnections_cfg`` is supplied.
-        price_area_correlations: Optional pairwise correlation dict for the
-            foreign-price stochastic coupling. Missing pairs default to 0.
-        price_areas_correlated: If ``False``, each foreign price path is
-            simulated independently (Cholesky step is identity).
-        enable_ntc_faults: If ``False``, all interconnections are forced to
-            :class:`~energy_sim.reliability.PerfectReliability` — useful to
-            isolate the price effect of faults from other noise sources.
-        storage_cfg: Optional mapping ``name -> storage_params`` (see
-            :data:`~energy_sim.config.STORAGE_UNITS`). When ``None`` or
-            empty, no battery storage is included. When supplied, Phase 4
-            of the dispatch is executed each run, and per-run storage
-            aggregates are populated.
+        weekday_factors: Day-of-week load multipliers. ``None`` disables.
+        holiday_factor: Holiday load multiplier. ``None`` disables.
+        holiday_calendar: Day-of-year holiday indices. ``None`` disables.
+        interconnections_cfg: Cross-border link parameters. ``None`` disables.
+        price_areas_cfg: Foreign price area parameters.
+        price_area_correlations: Pairwise foreign-price correlations.
+        price_areas_correlated: Whether to apply Cholesky coupling.
+        enable_ntc_faults: Whether NTC faults are enabled.
+        storage_cfg: Battery storage parameters. ``None`` disables.
 
     Returns:
-        dict: Aggregated results with keys:
-
-            - ``'avg_price'`` (np.ndarray): Mean annual price for each run,
-              shape ``(n_runs,)``, EUR/MWh.
-            - ``'monthly_prices'`` (np.ndarray): Monthly average prices,
-              shape ``(n_runs, 12)``, EUR/MWh.
-            - ``'curtailment'`` (np.ndarray): Total curtailed energy per run,
-              shape ``(n_runs,)``, in p.u.-quarter-hours.
-            - ``'avg_inertia'`` (np.ndarray): Mean system inertia per run,
-              shape ``(n_runs,)``, in seconds.
-            - ``'total_emissions'`` (np.ndarray): Total annual CO₂ emissions
-              per run, shape ``(n_runs,)``, in tons (territorial).
-            - ``'carbon_intensity'`` (np.ndarray): Average carbon intensity
-              per run, shape ``(n_runs,)``, in gCO₂/kWh (territorial).
-            - ``'emissions_by_tech'`` (dict[str, np.ndarray]): Per-technology
-              annual emissions, each shape ``(n_runs,)``, in tons.
-
-            When interconnections are active, additional keys are populated
-            (otherwise they hold empty arrays / lists):
-
-            - ``'interconnection_names'`` (list[str]): Ordered link names.
-            - ``'net_import_twh'`` (np.ndarray): Per-run, per-link net
-              imports (positive = into domestic system, negative = export),
-              shape ``(n_runs, n_links)``, in TWh.
-            - ``'import_gross_twh'`` (np.ndarray): Gross imports per run
-              per link, shape ``(n_runs, n_links)``, in TWh.
-            - ``'export_gross_twh'`` (np.ndarray): Gross exports per run
-              per link, shape ``(n_runs, n_links)``, in TWh.
-            - ``'imported_emissions_tons'`` (np.ndarray): Consumption-based
-              CO₂ embedded in net imports, shape ``(n_runs, n_links)``,
-              in tons.
-            - ``'foreign_price_mean'`` (np.ndarray): Time-average foreign
-              day-ahead price per link, shape ``(n_runs, n_links)``,
-              in EUR/MWh.
-            - ``'ntc_import_saturation_pct'`` (np.ndarray): Share of
-              timesteps where import dispatch reached the effective NTC
-              ceiling (availability-derated), shape ``(n_runs, n_links)``,
-              in percent.
-            - ``'import_hours'`` (np.ndarray): Hours per year in net-import
-              state per link, shape ``(n_runs, n_links)``, in hours.
-            - ``'export_hours'`` (np.ndarray): Hours per year in net-export
-              state per link, shape ``(n_runs, n_links)``, in hours.
-            - ``'import_energy_mwh'`` (np.ndarray): Gross import volume per
-              run per link, shape ``(n_runs, n_links)``, in MWh.
-            - ``'export_energy_mwh'`` (np.ndarray): Gross export volume per
-              run per link, shape ``(n_runs, n_links)``, in MWh.
-            - ``'total_economic_benefit_eur'`` (np.ndarray): Congestion-rent
-              economic benefit per link over the year, shape
-              ``(n_runs, n_links)``, in EUR. Always ≥ 0.
-            - ``'total_co2_benefit_tons'`` (np.ndarray): Signed CO₂ benefit
-              (positive = avoided emissions) per link over the year, shape
-              ``(n_runs, n_links)``, in tonnes. Can be negative when
-              importing from a dirtier foreign mix.
-            - ``'economic_benefit_monthly_eur'`` (np.ndarray): Monthly
-              economic benefit, shape ``(n_runs, n_links, 12)``, in EUR.
-            - ``'co2_benefit_monthly_tons'`` (np.ndarray): Monthly CO₂
-              benefit (signed), shape ``(n_runs, n_links, 12)``, in tonnes.
-            - ``'carbon_intensity_consumption'`` (np.ndarray): Consumption-
-              based carbon intensity (domestic emissions plus signed
-              attribution of cross-border flows divided by load), shape
-              ``(n_runs,)``, in gCO₂/kWh. Always populated; equals
-              ``carbon_intensity`` when no interconnections are active.
-
-            When storage is active, additional keys:
-
-            - ``'storage_names'`` (list[str]): Ordered unit names.
-            - ``'storage_energy_cycled_mwh'`` (np.ndarray): Total energy
-              discharged per unit per run, shape ``(n_runs, n_storage)``,
-              in MWh.
-            - ``'storage_revenue_eur'`` (np.ndarray): Net revenue per
-              unit per run, shape ``(n_runs, n_storage)``, in EUR
-              (discharge revenue minus charge cost).
-            - ``'storage_equivalent_cycles'`` (np.ndarray): Equivalent
-              full cycles per unit per run, shape ``(n_runs, n_storage)``.
-            - ``'storage_avg_soc'`` (np.ndarray): Time-average SOC per
-              unit per run, shape ``(n_runs, n_storage)``, as a fraction.
-            - ``'storage_monthly_avg_soc'`` (np.ndarray): Monthly average
-              SOC per unit per run, shape ``(n_runs, n_storage, 12)``.
+        MonteCarloResult: Typed container with all simulation outputs.
+            See :class:`MonteCarloResult` for field documentation.
     """
+    # ── Resolve config: accept SimulationConfig as first argument ─────
+    if isinstance(mix_config, SimulationConfig):
+        cfg = mix_config
+        mix_config = cfg.mix_config
+        gas_scenario = cfg.gas_scenario
+        coal_scenario = cfg.coal_scenario
+        co2_scenario = cfg.co2_scenario
+        n_runs = cfg.n_runs
+        load_noise = cfg.load_noise
+        seed = cfg.seed
+        weekday_factors = cfg.weekday_factors
+        holiday_factor = cfg.holiday_factor
+        holiday_calendar = cfg.holiday_calendar
+        interconnections_cfg = cfg.interconnections_cfg
+        price_areas_cfg = cfg.price_areas_cfg
+        price_area_correlations = cfg.price_area_correlations
+        price_areas_correlated = cfg.price_areas_correlated
+        enable_ntc_faults = cfg.enable_ntc_faults
+        storage_cfg = cfg.storage_cfg
+
     tg = TimeGrid()
     if holiday_calendar is not None:
         tg.set_holiday_calendar(holiday_calendar)
@@ -461,55 +581,54 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
         return (np.stack(rows, axis=0) if rows
                 else np.zeros((n_runs, n_links, 12)))
 
-    return {
-        'avg_price': np.array(avg_prices),
-        'monthly_prices': np.array(monthly_avg_prices),
-        'curtailment': np.array(total_curtailment),
-        'avg_inertia': np.array(avg_inertia),
-        'total_emissions': np.array(total_emissions),
-        'carbon_intensity': np.array(carbon_intensity),
-        'carbon_intensity_consumption': np.array(carbon_intensity_consumption),
-        'emissions_by_tech': emissions_by_tech,
-        'interconnection_names': ic_names,
-        'net_import_twh': _stack_or_empty(net_import_twh_rows),
-        'import_gross_twh': _stack_or_empty(import_gross_twh_rows),
-        'export_gross_twh': _stack_or_empty(export_gross_twh_rows),
-        'imported_emissions_tons': _stack_or_empty(imported_emissions_tons_rows),
-        'foreign_price_mean': _stack_or_empty(foreign_price_mean_rows),
-        'ntc_import_saturation_pct': _stack_or_empty(ntc_import_saturation_rows),
-        'import_hours': _stack_or_empty(import_hours_rows),
-        'export_hours': _stack_or_empty(export_hours_rows),
-        'import_energy_mwh': _stack_or_empty(import_energy_mwh_rows),
-        'export_energy_mwh': _stack_or_empty(export_energy_mwh_rows),
-        'total_economic_benefit_eur': _stack_or_empty(total_econ_benefit_rows),
-        'total_co2_benefit_tons': _stack_or_empty(total_co2_benefit_rows),
-        'economic_benefit_monthly_eur':
-            _stack_or_empty_monthly(econ_benefit_monthly_rows),
-        'co2_benefit_monthly_tons':
-            _stack_or_empty_monthly(co2_benefit_monthly_rows),
-        # Storage aggregates
-        'storage_names': storage_unit_names,
-        'storage_energy_cycled_mwh': (
+    return MonteCarloResult(
+        avg_price=np.array(avg_prices),
+        monthly_prices=np.array(monthly_avg_prices),
+        curtailment=np.array(total_curtailment),
+        avg_inertia=np.array(avg_inertia),
+        total_emissions=np.array(total_emissions),
+        carbon_intensity=np.array(carbon_intensity),
+        carbon_intensity_consumption=np.array(carbon_intensity_consumption),
+        emissions_by_tech=emissions_by_tech,
+        interconnection_names=ic_names,
+        net_import_twh=_stack_or_empty(net_import_twh_rows),
+        import_gross_twh=_stack_or_empty(import_gross_twh_rows),
+        export_gross_twh=_stack_or_empty(export_gross_twh_rows),
+        imported_emissions_tons=_stack_or_empty(imported_emissions_tons_rows),
+        foreign_price_mean=_stack_or_empty(foreign_price_mean_rows),
+        ntc_import_saturation_pct=_stack_or_empty(ntc_import_saturation_rows),
+        import_hours=_stack_or_empty(import_hours_rows),
+        export_hours=_stack_or_empty(export_hours_rows),
+        import_energy_mwh=_stack_or_empty(import_energy_mwh_rows),
+        export_energy_mwh=_stack_or_empty(export_energy_mwh_rows),
+        total_economic_benefit_eur=_stack_or_empty(total_econ_benefit_rows),
+        total_co2_benefit_tons=_stack_or_empty(total_co2_benefit_rows),
+        economic_benefit_monthly_eur=_stack_or_empty_monthly(
+            econ_benefit_monthly_rows),
+        co2_benefit_monthly_tons=_stack_or_empty_monthly(
+            co2_benefit_monthly_rows),
+        storage_names=storage_unit_names,
+        storage_energy_cycled_mwh=(
             np.stack(storage_energy_cycled_rows, axis=0)
             if storage_energy_cycled_rows
             else np.zeros((n_runs, n_storage))),
-        'storage_revenue_eur': (
+        storage_revenue_eur=(
             np.stack(storage_revenue_rows, axis=0)
             if storage_revenue_rows
             else np.zeros((n_runs, n_storage))),
-        'storage_equivalent_cycles': (
+        storage_equivalent_cycles=(
             np.stack(storage_equiv_cycles_rows, axis=0)
             if storage_equiv_cycles_rows
             else np.zeros((n_runs, n_storage))),
-        'storage_avg_soc': (
+        storage_avg_soc=(
             np.stack(storage_avg_soc_rows, axis=0)
             if storage_avg_soc_rows
             else np.zeros((n_runs, n_storage))),
-        'storage_monthly_avg_soc': (
+        storage_monthly_avg_soc=(
             np.stack(storage_monthly_soc_rows, axis=0)
             if storage_monthly_soc_rows
             else np.zeros((n_runs, n_storage, 12))),
-    }
+    )
 
 
 def sweep_technology(base_mix: dict, tech: str,
@@ -583,19 +702,20 @@ def sweep_technology(base_mix: dict, tech: str,
             }
             mix[tech].update(coal_defaults)
 
-        mc = run_monte_carlo(mix, gas_scenario, coal_scenario,
+        mc = run_monte_carlo(mix_config=mix, gas_scenario=gas_scenario,
+                             coal_scenario=coal_scenario,
                              co2_scenario=co2_scenario,
                              n_runs=n_runs, seed=seed)
-        mean_ebt = {k: v.mean() for k, v in mc['emissions_by_tech'].items()}
+        mean_ebt = {k: v.mean() for k, v in mc.emissions_by_tech.items()}
         results.append({
             'pct': pct,
-            'mean_price': mc['avg_price'].mean(),
-            'std_price': mc['avg_price'].std(),
-            'monthly_mean': mc['monthly_prices'].mean(axis=0),
-            'mean_curtailment': mc['curtailment'].mean(),
-            'mean_inertia': mc['avg_inertia'].mean(),
-            'mean_emissions': mc['total_emissions'].mean(),
-            'mean_carbon_intensity': mc['carbon_intensity'].mean(),
+            'mean_price': mc.avg_price.mean(),
+            'std_price': mc.avg_price.std(),
+            'monthly_mean': mc.monthly_prices.mean(axis=0),
+            'mean_curtailment': mc.curtailment.mean(),
+            'mean_inertia': mc.avg_inertia.mean(),
+            'mean_emissions': mc.total_emissions.mean(),
+            'mean_carbon_intensity': mc.carbon_intensity.mean(),
             'mean_emissions_by_tech': mean_ebt,
         })
         print(f"  {tech} {pct:.0f}%: price={results[-1]['mean_price']:.2f} EUR/MWh, "
@@ -809,16 +929,17 @@ def sweep_fuel_price(base_mix: dict, fuel_type: str,
             gas_sc = base_gas_scenario
             coal_sc = swept
 
-        mc = run_monte_carlo(base_mix, gas_sc, coal_sc,
+        mc = run_monte_carlo(mix_config=base_mix, gas_scenario=gas_sc,
+                             coal_scenario=coal_sc,
                              co2_scenario=co2_scenario,
                              n_runs=n_runs, seed=seed)
-        mean_ebt = {k: v.mean() for k, v in mc['emissions_by_tech'].items()}
+        mean_ebt = {k: v.mean() for k, v in mc.emissions_by_tech.items()}
         results.append({
             'fuel_mu': float(mu),
-            'mean_price': mc['avg_price'].mean(),
-            'std_price': mc['avg_price'].std(),
-            'mean_emissions': mc['total_emissions'].mean(),
-            'mean_carbon_intensity': mc['carbon_intensity'].mean(),
+            'mean_price': mc.avg_price.mean(),
+            'std_price': mc.avg_price.std(),
+            'mean_emissions': mc.total_emissions.mean(),
+            'mean_carbon_intensity': mc.carbon_intensity.mean(),
             'mean_emissions_by_tech': mean_ebt,
         })
         print(f"  {fuel_type} μ={mu:.0f}: elec_price={results[-1]['mean_price']:.2f} EUR/MWh, "
@@ -876,11 +997,12 @@ def sweep_fuel_prices_2d(base_mix: dict,
             coal_sc = {'mu': float(coal_mu), 'sigma': coal_params['sigma'],
                        'theta': coal_params['theta']}
 
-            mc = run_monte_carlo(base_mix, gas_sc, coal_sc,
+            mc = run_monte_carlo(mix_config=base_mix, gas_scenario=gas_sc,
+                                 coal_scenario=coal_sc,
                                  co2_scenario=co2_scenario,
                                  n_runs=n_runs, seed=seed)
-            price_matrix[i, j] = mc['avg_price'].mean()
-            ci_matrix[i, j] = mc['carbon_intensity'].mean()
+            price_matrix[i, j] = mc.avg_price.mean()
+            ci_matrix[i, j] = mc.carbon_intensity.mean()
             print(f"  gas_μ={gas_mu:.0f}, coal_μ={coal_mu:.0f}: "
                   f"price={price_matrix[i, j]:.2f} EUR/MWh, "
                   f"CI={ci_matrix[i, j]:.0f} gCO₂/kWh")
@@ -933,24 +1055,24 @@ def sweep_storage_capacity(
             }
         }
         mc = run_monte_carlo(
-            base_mix, gas_scenario,
+            mix_config=base_mix, gas_scenario=gas_scenario,
             coal_scenario=coal_scenario,
             co2_scenario=co2_scenario,
             n_runs=n_runs, seed=seed,
             storage_cfg=cfg,
         )
-        rev = mc['storage_revenue_eur'][:, 0]
+        rev = mc.storage_revenue_eur[:, 0]
         results.append({
             'energy_gwh': float(gwh),
             'revenue_mean': float(rev.mean()),
             'revenue_std': float(rev.std()),
-            'price_mean': float(mc['avg_price'].mean()),
-            'price_std': float(mc['avg_price'].std()),
-            'avg_soc': float(mc['storage_avg_soc'][:, 0].mean()),
+            'price_mean': float(mc.avg_price.mean()),
+            'price_std': float(mc.avg_price.std()),
+            'avg_soc': float(mc.storage_avg_soc[:, 0].mean()),
             'equiv_cycles': float(
-                mc['storage_equivalent_cycles'][:, 0].mean()),
+                mc.storage_equivalent_cycles[:, 0].mean()),
         })
         print(f"  E={gwh:.1f} GWh: revenue={rev.mean() / 1e6:+.1f} M\u20ac, "
-              f"price={mc['avg_price'].mean():.1f} EUR/MWh, "
+              f"price={mc.avg_price.mean():.1f} EUR/MWh, "
               f"cycles={results[-1]['equiv_cycles']:.0f}")
     return results

@@ -57,6 +57,7 @@ from energy_sim.interconnections import (
 )
 from energy_sim.storage import build_storage_units
 from energy_sim.simulation import (
+    SimulationConfig, MonteCarloResult,
     run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
     build_incremental_heatmap, sweep_fuel_price, sweep_fuel_prices_2d,
     sweep_storage_capacity,
@@ -107,12 +108,12 @@ def main() -> None:
     print("\n[1/9] Running base case (Italian mix, no nuclear, gas base)...")
     t0 = time.time()
     base_mc = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=30)
-    print(f"  Base price: {base_mc['avg_price'].mean():.2f} "
-          f"\u00b1 {base_mc['avg_price'].std():.2f} EUR/MWh")
-    print(f"  Mean inertia: {base_mc['avg_inertia'].mean():.2f} s")
-    print(f"  Total CO₂: {base_mc['total_emissions'].mean() / 1e6:.2f} Mt/year")
-    print(f"  Carbon intensity: {base_mc['carbon_intensity'].mean():.0f} gCO₂/kWh")
-    for tech, vals in base_mc['emissions_by_tech'].items():
+    print(f"  Base price: {base_mc.avg_price.mean():.2f} "
+          f"\u00b1 {base_mc.avg_price.std():.2f} EUR/MWh")
+    print(f"  Mean inertia: {base_mc.avg_inertia.mean():.2f} s")
+    print(f"  Total CO₂: {base_mc.total_emissions.mean() / 1e6:.2f} Mt/year")
+    print(f"  Carbon intensity: {base_mc.carbon_intensity.mean():.0f} gCO₂/kWh")
+    for tech, vals in base_mc.emissions_by_tech.items():
         if vals.mean() > 0:
             print(f"    {tech}: {vals.mean() / 1e6:.2f} Mt/year")
     print(f"  Time: {time.time() - t0:.1f}s")
@@ -385,15 +386,15 @@ def main() -> None:
         enable_ntc_faults=ENABLE_NTC_FAULTS,
     )
 
-    base_price = base_mc['avg_price'].mean()
-    ic_price = ic_mc['avg_price'].mean()
-    base_ci = base_mc['carbon_intensity'].mean()
-    ic_ci = ic_mc['carbon_intensity'].mean()
-    ic_ci_cons = ic_mc['carbon_intensity_consumption'].mean()
-    total_net_import = ic_mc['net_import_twh'].sum(axis=1).mean()
-    total_imported_emis = ic_mc['imported_emissions_tons'].sum(axis=1).mean()
-    total_econ_benefit = ic_mc['total_economic_benefit_eur'].sum(axis=1).mean()
-    total_co2_benefit = ic_mc['total_co2_benefit_tons'].sum(axis=1).mean()
+    base_price = base_mc.avg_price.mean()
+    ic_price = ic_mc.avg_price.mean()
+    base_ci = base_mc.carbon_intensity.mean()
+    ic_ci = ic_mc.carbon_intensity.mean()
+    ic_ci_cons = ic_mc.carbon_intensity_consumption.mean()
+    total_net_import = ic_mc.net_import_twh.sum(axis=1).mean()
+    total_imported_emis = ic_mc.imported_emissions_tons.sum(axis=1).mean()
+    total_econ_benefit = ic_mc.total_economic_benefit_eur.sum(axis=1).mean()
+    total_co2_benefit = ic_mc.total_co2_benefit_tons.sum(axis=1).mean()
 
     print(f"  Domestic price:   {base_price:.2f} → {ic_price:.2f} "
           f"EUR/MWh  ({ic_price - base_price:+.2f})")
@@ -413,12 +414,12 @@ def main() -> None:
     print("\n  Per-link flows (MC averages):")
     print(f"  {'Link':<7} {'Net TWh':>9} {'Import':>9} {'Export':>9} "
           f"{'Foreign €':>11} {'Sat %':>7}")
-    for i, name in enumerate(ic_mc['interconnection_names']):
-        net = ic_mc['net_import_twh'][:, i].mean()
-        imp = ic_mc['import_gross_twh'][:, i].mean()
-        exp = ic_mc['export_gross_twh'][:, i].mean()
-        fp = ic_mc['foreign_price_mean'][:, i].mean()
-        sat = ic_mc['ntc_import_saturation_pct'][:, i].mean()
+    for i, name in enumerate(ic_mc.interconnection_names):
+        net = ic_mc.net_import_twh[:, i].mean()
+        imp = ic_mc.import_gross_twh[:, i].mean()
+        exp = ic_mc.export_gross_twh[:, i].mean()
+        fp = ic_mc.foreign_price_mean[:, i].mean()
+        sat = ic_mc.ntc_import_saturation_pct[:, i].mean()
         print(f"  {name:<7} {net:>9.2f} {imp:>9.2f} {exp:>9.2f} "
               f"{fp:>11.2f} {sat:>7.1f}")
 
@@ -506,18 +507,18 @@ def main() -> None:
         n_runs=30, seed=42,
         storage_cfg=STORAGE_UNITS if ENABLE_STORAGE else None,
     )
-    base_price_ns = base_mc['avg_price'].mean()
-    stor_price = storage_mc['avg_price'].mean()
-    stor_ci = storage_mc['carbon_intensity'].mean()
+    base_price_ns = base_mc.avg_price.mean()
+    stor_price = storage_mc.avg_price.mean()
+    stor_ci = storage_mc.carbon_intensity.mean()
 
     print(f"  Price: {base_price_ns:.2f} -> {stor_price:.2f} EUR/MWh "
           f"({stor_price - base_price_ns:+.2f})")
     print(f"  CI:    {stor_ci:.0f} gCO\u2082/kWh")
 
-    if storage_mc['storage_names']:
-        rev = storage_mc['storage_revenue_eur'][:, 0]
-        cycles = storage_mc['storage_equivalent_cycles'][:, 0]
-        avg_soc = storage_mc['storage_avg_soc'][:, 0]
+    if storage_mc.storage_names:
+        rev = storage_mc.storage_revenue_eur[:, 0]
+        cycles = storage_mc.storage_equivalent_cycles[:, 0]
+        avg_soc = storage_mc.storage_avg_soc[:, 0]
         print(f"  Revenue: {rev.mean() / 1e6:+.1f} M\u20ac/yr "
               f"(\u00b1{rev.std() / 1e6:.1f})")
         print(f"  Equiv. cycles: {cycles.mean():.0f}/yr")

@@ -38,7 +38,7 @@ class TestRunMonteCarlo:
         """
         r1 = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=99)
         r2 = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=99)
-        np.testing.assert_array_equal(r1['avg_price'], r2['avg_price'])
+        np.testing.assert_array_equal(r1.avg_price, r2.avg_price)
 
     def test_output_shapes(self):
         """All output arrays must have correct shapes: avg_price (n_runs,),
@@ -46,22 +46,22 @@ class TestRunMonteCarlo:
         """
         n = 3
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=n, seed=0)
-        assert r['avg_price'].shape == (n,)
-        assert r['monthly_prices'].shape == (n, 12)
-        assert r['curtailment'].shape == (n,)
-        assert r['avg_inertia'].shape == (n,)
+        assert r.avg_price.shape == (n,)
+        assert r.monthly_prices.shape == (n, 12)
+        assert r.curtailment.shape == (n,)
+        assert r.avg_inertia.shape == (n,)
 
     def test_single_run(self):
         """n_runs=1 must work without errors and return arrays of shape (1,) / (1, 12)."""
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=1, seed=0)
-        assert r['avg_price'].shape == (1,)
+        assert r.avg_price.shape == (1,)
 
     def test_prices_reasonable(self):
         """Mean electricity price for the Italian mix (base gas) must fall in a
         reasonable range of 10-500 EUR/MWh — sanity check against model errors.
         """
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
-        mean_price = r['avg_price'].mean()
+        mean_price = r.avg_price.mean()
         assert 10 < mean_price < 500
 
     def test_emissions_output_shapes(self):
@@ -70,10 +70,10 @@ class TestRunMonteCarlo:
         """
         n = 2
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=n, seed=0)
-        assert r['total_emissions'].shape == (n,)
-        assert r['carbon_intensity'].shape == (n,)
-        assert isinstance(r['emissions_by_tech'], dict)
-        for v in r['emissions_by_tech'].values():
+        assert r.total_emissions.shape == (n,)
+        assert r.carbon_intensity.shape == (n,)
+        assert isinstance(r.emissions_by_tech, dict)
+        for v in r.emissions_by_tech.values():
             assert v.shape == (n,)
 
     def test_emissions_positive(self):
@@ -81,14 +81,14 @@ class TestRunMonteCarlo:
         gas generation with non-zero emission factor.
         """
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
-        assert (r['total_emissions'] > 0).all()
+        assert (r.total_emissions > 0).all()
 
     def test_carbon_intensity_reasonable(self):
         """Carbon intensity for the Italian mix (gas-heavy) should be in a
         reasonable range: 50-600 gCO₂/kWh.
         """
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
-        mean_ci = r['carbon_intensity'].mean()
+        mean_ci = r.carbon_intensity.mean()
         assert 50 < mean_ci < 600
 
     def test_only_gas_emits(self):
@@ -96,7 +96,7 @@ class TestRunMonteCarlo:
         All other technologies must have zero (or near-zero) emissions.
         """
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
-        for tech, vals in r['emissions_by_tech'].items():
+        for tech, vals in r.emissions_by_tech.items():
             if tech == 'gas':
                 assert vals.mean() > 0
             else:
@@ -112,7 +112,7 @@ class TestRunMonteCarlo:
         r_base = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=2, seed=42)
         r_coal = run_monte_carlo(mix_coal, GAS_SCENARIOS['base'],
                                  COAL_SCENARIOS['base'], n_runs=2, seed=42)
-        assert r_coal['total_emissions'].mean() > r_base['total_emissions'].mean()
+        assert r_coal.total_emissions.mean() > r_base.total_emissions.mean()
 
     def test_coal_emits_in_mix(self):
         """When coal is present in the mix with non-zero capacity, it must
@@ -123,8 +123,8 @@ class TestRunMonteCarlo:
         mix_coal['coal']['capacity_gw'] = 15.0
         r = run_monte_carlo(mix_coal, GAS_SCENARIOS['base'],
                             COAL_SCENARIOS['base'], n_runs=2, seed=42)
-        assert 'coal' in r['emissions_by_tech']
-        assert r['emissions_by_tech']['coal'].mean() > 0
+        assert 'coal' in r.emissions_by_tech
+        assert r.emissions_by_tech['coal'].mean() > 0
 
     def test_weekday_holiday_active_by_default(self):
         """With default settings, weekday/holiday modulation should produce
@@ -139,7 +139,7 @@ class TestRunMonteCarlo:
                                     holiday_factor=None,
                                     holiday_calendar=None)
         # Weekday/holiday reduce load → lower prices on average
-        assert r_with['avg_price'].mean() <= r_without['avg_price'].mean(), (
+        assert r_with.avg_price.mean() <= r_without.avg_price.mean(), (
             "Weekday/holiday load reduction should lower or maintain average price"
         )
 
@@ -153,8 +153,8 @@ class TestRunMonteCarlo:
                             holiday_factor=None,
                             holiday_calendar=None,
                             load_noise=0.02)
-        assert r['avg_price'].shape == (1,)
-        assert r['avg_price'][0] > 0
+        assert r.avg_price.shape == (1,)
+        assert r.avg_price[0] > 0
 
 
 class TestInterconnectionAggregates:
@@ -188,16 +188,16 @@ class TestInterconnectionAggregates:
         accidental row/column swaps or missing stacks.
         """
         r = self._run_with_links(n_runs=2)
-        n_links = len(r['interconnection_names'])
-        assert r['import_hours'].shape == (2, n_links)
-        assert r['export_hours'].shape == (2, n_links)
-        assert r['import_energy_mwh'].shape == (2, n_links)
-        assert r['export_energy_mwh'].shape == (2, n_links)
-        assert r['total_economic_benefit_eur'].shape == (2, n_links)
-        assert r['total_co2_benefit_tons'].shape == (2, n_links)
-        assert r['economic_benefit_monthly_eur'].shape == (2, n_links, 12)
-        assert r['co2_benefit_monthly_tons'].shape == (2, n_links, 12)
-        assert r['carbon_intensity_consumption'].shape == (2,)
+        n_links = len(r.interconnection_names)
+        assert r.import_hours.shape == (2, n_links)
+        assert r.export_hours.shape == (2, n_links)
+        assert r.import_energy_mwh.shape == (2, n_links)
+        assert r.export_energy_mwh.shape == (2, n_links)
+        assert r.total_economic_benefit_eur.shape == (2, n_links)
+        assert r.total_co2_benefit_tons.shape == (2, n_links)
+        assert r.economic_benefit_monthly_eur.shape == (2, n_links, 12)
+        assert r.co2_benefit_monthly_tons.shape == (2, n_links, 12)
+        assert r.carbon_intensity_consumption.shape == (2,)
 
     def test_monthly_sums_match_annual_totals(self):
         """Summing the 12 monthly slots must reproduce the annual totals
@@ -205,13 +205,13 @@ class TestInterconnectionAggregates:
         against off-by-one in the month-mask loop.
         """
         r = self._run_with_links(n_runs=2)
-        econ_from_monthly = r['economic_benefit_monthly_eur'].sum(axis=2)
-        co2_from_monthly = r['co2_benefit_monthly_tons'].sum(axis=2)
+        econ_from_monthly = r.economic_benefit_monthly_eur.sum(axis=2)
+        co2_from_monthly = r.co2_benefit_monthly_tons.sum(axis=2)
         np.testing.assert_allclose(econ_from_monthly,
-                                   r['total_economic_benefit_eur'],
+                                   r.total_economic_benefit_eur,
                                    rtol=1e-10, atol=1e-3)
         np.testing.assert_allclose(co2_from_monthly,
-                                   r['total_co2_benefit_tons'],
+                                   r.total_co2_benefit_tons,
                                    rtol=1e-10, atol=1e-6)
 
     def test_economic_benefit_non_negative_annual(self):
@@ -220,7 +220,7 @@ class TestInterconnectionAggregates:
         dispatch tests.
         """
         r = self._run_with_links(n_runs=2)
-        assert (r['total_economic_benefit_eur'] >= -1e-6).all()
+        assert (r.total_economic_benefit_eur >= -1e-6).all()
 
     def test_consumption_ci_defaults_to_territorial_without_links(self):
         """When no interconnections are active the consumption-based CI
@@ -229,8 +229,8 @@ class TestInterconnectionAggregates:
         """
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'],
                             n_runs=2, seed=42)
-        np.testing.assert_allclose(r['carbon_intensity_consumption'],
-                                   r['carbon_intensity'],
+        np.testing.assert_allclose(r.carbon_intensity_consumption,
+                                   r.carbon_intensity,
                                    rtol=1e-10, atol=1e-10)
 
     def test_consumption_ci_reasonable_with_links(self):
@@ -239,8 +239,8 @@ class TestInterconnectionAggregates:
         the territorial figure by at most a physically plausible margin.
         """
         r = self._run_with_links(n_runs=2)
-        ci_t = r['carbon_intensity']
-        ci_c = r['carbon_intensity_consumption']
+        ci_t = r.carbon_intensity
+        ci_c = r.carbon_intensity_consumption
         assert np.all(np.isfinite(ci_c))
         assert np.all(ci_c > 0)
         # 100 g/kWh is a very loose envelope — real shift is ~20 g/kWh.
@@ -267,28 +267,28 @@ class TestStorageAggregates:
     def test_storage_aggregate_shapes(self):
         """All storage aggregates must have expected shapes."""
         r = self._run_with_storage(n_runs=2)
-        n_s = len(r['storage_names'])
+        n_s = len(r.storage_names)
         assert n_s == 1
-        assert r['storage_energy_cycled_mwh'].shape == (2, n_s)
-        assert r['storage_revenue_eur'].shape == (2, n_s)
-        assert r['storage_equivalent_cycles'].shape == (2, n_s)
-        assert r['storage_avg_soc'].shape == (2, n_s)
-        assert r['storage_monthly_avg_soc'].shape == (2, n_s, 12)
+        assert r.storage_energy_cycled_mwh.shape == (2, n_s)
+        assert r.storage_revenue_eur.shape == (2, n_s)
+        assert r.storage_equivalent_cycles.shape == (2, n_s)
+        assert r.storage_avg_soc.shape == (2, n_s)
+        assert r.storage_monthly_avg_soc.shape == (2, n_s, 12)
 
     def test_energy_cycled_positive(self):
         """Total energy discharged must be strictly positive — the battery
         should participate in arbitrage with any reasonable price spread.
         """
         r = self._run_with_storage(n_runs=2)
-        assert (r['storage_energy_cycled_mwh'] > 0).all()
+        assert (r.storage_energy_cycled_mwh > 0).all()
 
     def test_avg_soc_inside_band(self):
         """Time-average SOC must lie inside the operational band."""
         from energy_sim.config import STORAGE_UNITS
         cfg = list(STORAGE_UNITS.values())[0]
         r = self._run_with_storage(n_runs=2)
-        assert (r['storage_avg_soc'] >= cfg['soc_min_frac']).all()
-        assert (r['storage_avg_soc'] <= cfg['soc_max_frac']).all()
+        assert (r.storage_avg_soc >= cfg['soc_min_frac']).all()
+        assert (r.storage_avg_soc <= cfg['soc_max_frac']).all()
 
     def test_no_storage_returns_empty_arrays(self):
         """When ``storage_cfg=None``, storage arrays must be empty but
@@ -296,16 +296,16 @@ class TestStorageAggregates:
         """
         r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'],
                             n_runs=2, seed=42, storage_cfg=None)
-        assert r['storage_names'] == []
-        assert r['storage_energy_cycled_mwh'].shape == (2, 0)
-        assert r['storage_monthly_avg_soc'].shape == (2, 0, 12)
+        assert r.storage_names == []
+        assert r.storage_energy_cycled_mwh.shape == (2, 0)
+        assert r.storage_monthly_avg_soc.shape == (2, 0, 12)
 
     def test_equivalent_cycles_reasonable(self):
         """Equivalent full cycles per year should be in a physically
         plausible range (1–500 for daily cycling).
         """
         r = self._run_with_storage(n_runs=2)
-        cycles = r['storage_equivalent_cycles']
+        cycles = r.storage_equivalent_cycles
         assert (cycles > 0).all()
         assert (cycles < 500).all()
 
