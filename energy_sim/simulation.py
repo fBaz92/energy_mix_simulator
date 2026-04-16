@@ -222,7 +222,8 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
                     price_area_correlations: dict[tuple[str, str], float] | None = None,
                     price_areas_correlated: bool = True,
                     enable_ntc_faults: bool = True,
-                    storage_cfg: dict[str, dict] | None = None) -> MonteCarloResult:
+                    storage_cfg: dict[str, dict] | None = None,
+                    progress_callback=None) -> MonteCarloResult:
     """Run a Monte Carlo simulation of the electricity market.
 
     For each run: builds fresh generators (new stochastic fuel price paths),
@@ -268,6 +269,10 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
         price_areas_correlated: Whether to apply Cholesky coupling.
         enable_ntc_faults: Whether NTC faults are enabled.
         storage_cfg: Battery storage parameters. ``None`` disables.
+        progress_callback: Optional callable ``f(fraction: float) -> None``
+            invoked after each MC run with the completion fraction
+            (0.0 to 1.0). Used by the web API for progress tracking.
+            ``None`` (default) disables progress reporting.
 
     Returns:
         MonteCarloResult: Typed container with all simulation outputs.
@@ -569,6 +574,10 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
                 mask = tg.month == m
                 monthly_soc[:, m - 1] = soc_arr[:, mask].mean(axis=1)
             storage_monthly_soc_rows.append(monthly_soc)
+
+        # Report progress to optional callback (e.g. web API progress tracking)
+        if progress_callback is not None:
+            progress_callback((run + 1) / n_runs)
 
     emissions_by_tech = {k: np.array(v) for k, v in emissions_by_tech_lists.items()}
 
