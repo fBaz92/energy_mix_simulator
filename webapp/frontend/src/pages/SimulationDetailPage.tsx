@@ -5,8 +5,9 @@
  * endpoint every 500ms until completion, then shows summary stats
  * and a link to the results dashboard (Phase 4).
  */
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useSimulation } from "@/api/simulations";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function SimulationDetailPage() {
@@ -120,9 +121,9 @@ export function SimulationDetailPage() {
       )}
 
       {sim.status === "completed" && (
-        <p className="text-sm text-muted-foreground italic">
-          Full result charts will be available in Phase 4.
-        </p>
+        <Button asChild>
+          <Link to={`/results/${sim.id}`}>Open full results dashboard →</Link>
+        </Button>
       )}
     </div>
   );

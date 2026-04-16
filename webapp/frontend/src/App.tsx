@@ -23,6 +23,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ScenariosPage } from "@/pages/ScenariosPage";
 import { SimulationsPage } from "@/pages/SimulationsPage";
 import { SimulationDetailPage } from "@/pages/SimulationDetailPage";
+import { ResultsPage } from "@/pages/ResultsPage";
 import { ComparePage } from "@/pages/ComparePage";
 
 const queryClient = new QueryClient({
@@ -47,6 +48,7 @@ function App() {
               path="/simulations/:id"
               element={<SimulationDetailPage />}
             />
+            <Route path="/results/:id" element={<ResultsPage />} />
             <Route path="/compare" element={<ComparePage />} />
           </Route>
         </Routes>

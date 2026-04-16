@@ -87,7 +87,15 @@ export function SimulationsPage() {
                       <Trash2 className="h-4 w-4" />
                     </Button>
                     <Button asChild size="sm" variant="outline">
-                      <Link to={`/simulations/${s.id}`}>Open</Link>
+                      <Link
+                        to={
+                          s.status === "completed"
+                            ? `/results/${s.id}`
+                            : `/simulations/${s.id}`
+                        }
+                      >
+                        Open
+                      </Link>
                     </Button>
                   </div>
                 </div>
