@@ -248,6 +248,68 @@ class TestInterconnectionAggregates:
         assert np.all(np.abs(ci_c - ci_t) < 100)
 
 
+class TestStorageAggregates:
+    """Monte-Carlo-level aggregates for battery storage (Phase 7).
+
+    Exercises the per-unit arrays that :func:`run_monte_carlo` fills in
+    when ``storage_cfg`` is supplied. Keeps the run count low (2 MC runs)
+    so it executes in the fast test tier.
+    """
+
+    def _run_with_storage(self, n_runs=2):
+        """Run a short MC with the default Italian mix + storage."""
+        from energy_sim.config import STORAGE_UNITS
+        return run_monte_carlo(
+            ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=n_runs, seed=42,
+            storage_cfg=STORAGE_UNITS,
+        )
+
+    def test_storage_aggregate_shapes(self):
+        """All storage aggregates must have expected shapes."""
+        r = self._run_with_storage(n_runs=2)
+        n_s = len(r['storage_names'])
+        assert n_s == 1
+        assert r['storage_energy_cycled_mwh'].shape == (2, n_s)
+        assert r['storage_revenue_eur'].shape == (2, n_s)
+        assert r['storage_equivalent_cycles'].shape == (2, n_s)
+        assert r['storage_avg_soc'].shape == (2, n_s)
+        assert r['storage_monthly_avg_soc'].shape == (2, n_s, 12)
+
+    def test_energy_cycled_positive(self):
+        """Total energy discharged must be strictly positive — the battery
+        should participate in arbitrage with any reasonable price spread.
+        """
+        r = self._run_with_storage(n_runs=2)
+        assert (r['storage_energy_cycled_mwh'] > 0).all()
+
+    def test_avg_soc_inside_band(self):
+        """Time-average SOC must lie inside the operational band."""
+        from energy_sim.config import STORAGE_UNITS
+        cfg = list(STORAGE_UNITS.values())[0]
+        r = self._run_with_storage(n_runs=2)
+        assert (r['storage_avg_soc'] >= cfg['soc_min_frac']).all()
+        assert (r['storage_avg_soc'] <= cfg['soc_max_frac']).all()
+
+    def test_no_storage_returns_empty_arrays(self):
+        """When ``storage_cfg=None``, storage arrays must be empty but
+        present — callers can read them unconditionally.
+        """
+        r = run_monte_carlo(ITALIAN_MIX, GAS_SCENARIOS['base'],
+                            n_runs=2, seed=42, storage_cfg=None)
+        assert r['storage_names'] == []
+        assert r['storage_energy_cycled_mwh'].shape == (2, 0)
+        assert r['storage_monthly_avg_soc'].shape == (2, 0, 12)
+
+    def test_equivalent_cycles_reasonable(self):
+        """Equivalent full cycles per year should be in a physically
+        plausible range (1–500 for daily cycling).
+        """
+        r = self._run_with_storage(n_runs=2)
+        cycles = r['storage_equivalent_cycles']
+        assert (cycles > 0).all()
+        assert (cycles < 500).all()
+
+
 @pytest.mark.slow
 class TestSweepTechnology:
     """Verify the technology penetration sweep utility."""

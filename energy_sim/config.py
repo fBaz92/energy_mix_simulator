@@ -533,3 +533,61 @@ ENABLE_INTERCONNECTIONS: bool = True
 When ``False``, no import virtual generators or export adjustments are added
 to the dispatch, regardless of :data:`INTERCONNECTIONS` content.
 """
+
+# ---------------------------------------------------------------------------
+# Battery storage (utility-scale BESS)
+# ---------------------------------------------------------------------------
+STORAGE_UNITS: dict[str, dict] = {
+    'aggregate_bess': {
+        'energy_capacity_gwh': 4.0,
+        'power_capacity_gw': 2.0,
+        'efficiency_roundtrip': 0.88,
+        'soc_min_frac': 0.10,
+        'soc_max_frac': 0.90,
+        'initial_soc_frac': 0.50,
+        'self_discharge_per_day': 0.001,
+        'h_synthetic': 4.0,
+        'inertia_soc_margin': 0.02,
+    },
+}
+"""Default aggregate battery storage for the Italian system.
+
+A single aggregated unit representing ~2 GW / 4 GWh of grid-scale BESS,
+roughly consistent with PNIEC 2030 targets. The round-trip efficiency of
+0.88 is typical of current LFP utility-scale systems including inverter
+and auxiliary losses. Synthetic inertia of 4 s emulates a gas turbine.
+
+Keys (per unit):
+    energy_capacity_gwh (float): Nameplate energy capacity (GWh AC).
+    power_capacity_gw (float): Nameplate charge/discharge power (GW AC).
+    efficiency_roundtrip (float): AC-AC round-trip efficiency.
+    soc_min_frac, soc_max_frac (float): Operational SOC band fractions.
+    initial_soc_frac (float): Starting SOC at t=0.
+    self_discharge_per_day (float): Idle energy loss per 24 h.
+    h_synthetic (float): Emulated inertia constant in seconds.
+    inertia_soc_margin (float): SOC headroom required for inertia support.
+"""
+
+STORAGE_PERCENTILE_WINDOW_QH: int = 672
+"""Rolling window length (quarter-hours) for the percentile arbitrage.
+
+672 qh = 7 days — captures a full weekly price cycle, long enough to
+estimate stable quantiles but short enough to track slow price drifts
+(gas shocks, seasonal transitions).
+"""
+
+STORAGE_CHARGE_PERCENTILE: float = 25.0
+"""Charge when current marginal price is below this percentile of the window."""
+
+STORAGE_DISCHARGE_PERCENTILE: float = 75.0
+"""Discharge when current marginal price is above this percentile of the window."""
+
+ENABLE_STORAGE: bool = True
+"""Master switch for battery storage in the dispatch pipeline.
+
+When ``False``, the dispatch behaves exactly as in previous phases
+(merit order + inertia fix + export adjustment), and no storage arrays
+are populated on :class:`~energy_sim.dispatch.DispatchResult`. Useful
+for baseline runs and for isolating the marginal contribution of storage
+to prices, curtailment and emissions.
+"""

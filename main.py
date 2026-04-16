@@ -24,6 +24,10 @@ Runs the full analysis pipeline in nine sequential steps:
    import dependence with vs. without the foreign market. Generates
    flow-summary, flow-duration and price-convergence diagnostics plus a
    dispatch plot showing imports on top of the domestic stack.
+10. **Battery storage**: aggregate 2 GW / 4 GWh BESS with rolling-percentile
+    arbitrage. Compares price/emissions with and without storage, generates
+    SOC annual timeseries and monthly average plots, and sweeps energy capacity
+    (1–8 GWh) to produce a revenue-vs-sizing curve.
 
 All output PNG files are saved to ``output/``.
 """
@@ -39,6 +43,9 @@ from energy_sim.config import (
     QUARTERS_PER_DAY, P_BASE,
     INTERCONNECTIONS, PRICE_AREAS, PRICE_AREA_CORRELATIONS,
     PRICE_AREAS_CORRELATED, ENABLE_NTC_FAULTS,
+    STORAGE_UNITS, ENABLE_STORAGE,
+    WEEKDAY_LOAD_FACTORS, HOLIDAY_LOAD_FACTOR,
+    ITALIAN_HOLIDAYS_DOY, DEFAULT_LOAD_NOISE_SIGMA,
 )
 from energy_sim.models import TimeGrid, LoadProfile
 from energy_sim.generators import CarbonPriceModel, build_generators
@@ -48,9 +55,11 @@ from energy_sim.interconnections import (
     build_interconnections_from_config,
     realize_interconnections,
 )
+from energy_sim.storage import build_storage_units
 from energy_sim.simulation import (
     run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
     build_incremental_heatmap, sweep_fuel_price, sweep_fuel_prices_2d,
+    sweep_storage_capacity,
 )
 from energy_sim.visualization import (
     plot_heatmap, plot_sensitivity_curve, plot_monthly_heatmap,
@@ -63,6 +72,8 @@ from energy_sim.visualization import (
     plot_import_export_hours, plot_energy_bars_by_country,
     plot_economic_benefit_monthly, plot_co2_benefit_monthly,
     plot_generation_mix_pie,
+    plot_storage_soc_timeseries, plot_storage_soc_monthly,
+    plot_storage_revenue_vs_capacity,
 )
 
 
@@ -451,7 +462,6 @@ def main() -> None:
     rng_prices = np.random.default_rng(ss_prices)
     rng_faults = np.random.default_rng(ss_faults)
 
-    from energy_sim.config import ITALIAN_HOLIDAYS_DOY, DEFAULT_LOAD_NOISE_SIGMA
     tg_ic = TimeGrid()
     tg_ic.set_holiday_calendar(ITALIAN_HOLIDAYS_DOY)
 
@@ -481,6 +491,72 @@ def main() -> None:
         gens_ic, result_ic, load_ic, 190,
         os.path.join(out_dir, 'dispatch_summer_with_imports.png'),
         '(Summer, base mix + interconnections)')
+
+    print(f"  Time: {time.time() - t0:.1f}s")
+
+    # ── 10. Battery Storage ─────────────────────────────────────────
+    print("\n10. Battery storage (Phase 7)")
+    t0 = time.time()
+
+    # MC with storage vs without
+    storage_mc = run_monte_carlo(
+        ITALIAN_MIX, GAS_SCENARIOS['base'],
+        coal_scenario=COAL_SCENARIOS['base'],
+        co2_scenario=CO2_SCENARIOS['base'],
+        n_runs=30, seed=42,
+        storage_cfg=STORAGE_UNITS if ENABLE_STORAGE else None,
+    )
+    base_price_ns = base_mc['avg_price'].mean()
+    stor_price = storage_mc['avg_price'].mean()
+    stor_ci = storage_mc['carbon_intensity'].mean()
+
+    print(f"  Price: {base_price_ns:.2f} -> {stor_price:.2f} EUR/MWh "
+          f"({stor_price - base_price_ns:+.2f})")
+    print(f"  CI:    {stor_ci:.0f} gCO\u2082/kWh")
+
+    if storage_mc['storage_names']:
+        rev = storage_mc['storage_revenue_eur'][:, 0]
+        cycles = storage_mc['storage_equivalent_cycles'][:, 0]
+        avg_soc = storage_mc['storage_avg_soc'][:, 0]
+        print(f"  Revenue: {rev.mean() / 1e6:+.1f} M\u20ac/yr "
+              f"(\u00b1{rev.std() / 1e6:.1f})")
+        print(f"  Equiv. cycles: {cycles.mean():.0f}/yr")
+        print(f"  Avg SOC: {avg_soc.mean():.2f}")
+
+        # SOC monthly bar chart
+        plot_storage_soc_monthly(
+            storage_mc, os.path.join(out_dir, 'storage_soc_monthly.png'))
+
+    # Single dispatch for SOC timeseries plot
+    tg_st = TimeGrid()
+    tg_st.set_holiday_calendar(ITALIAN_HOLIDAYS_DOY)
+    lp_st = LoadProfile(tg_st)
+    lp_st.set_weekday_factors(WEEKDAY_LOAD_FACTORS)
+    lp_st.set_holiday_factor(HOLIDAY_LOAD_FACTOR)
+    rng_st = np.random.default_rng(np.random.SeedSequence(42).spawn(3)[0])
+    gens_st = build_generators(ITALIAN_MIX, GAS_SCENARIOS['base'],
+                               COAL_SCENARIOS['base'])
+    co2_st = CarbonPriceModel(**CO2_SCENARIOS['base'])
+    for g in gens_st:
+        g.prepare_run(tg_st, rng_st, co2_st)
+    load_st = lp_st.generate(rng_st, noise_sigma=DEFAULT_LOAD_NOISE_SIGMA)
+    su = build_storage_units(STORAGE_UNITS)
+    result_st = dispatch_year(gens_st, load_st, storage_units=su)
+    plot_storage_soc_timeseries(
+        result_st, os.path.join(out_dir, 'storage_soc_annual.png'))
+
+    # Capacity vs revenue sweep
+    print("\n  Storage capacity sweep...")
+    sweep_res = sweep_storage_capacity(
+        ITALIAN_MIX, GAS_SCENARIOS['base'],
+        power_gw=2.0,
+        energy_gwh_range=np.array([1.0, 2.0, 4.0, 6.0, 8.0]),
+        coal_scenario=COAL_SCENARIOS['base'],
+        co2_scenario=CO2_SCENARIOS['base'],
+        n_runs=15, seed=42,
+    )
+    plot_storage_revenue_vs_capacity(
+        sweep_res, os.path.join(out_dir, 'storage_revenue_vs_capacity.png'))
 
     print(f"  Time: {time.time() - t0:.1f}s")
 

@@ -25,6 +25,7 @@ from energy_sim.interconnections import (
     build_interconnections_from_config,
     realize_interconnections,
 )
+from energy_sim.storage import build_storage_units
 
 
 def run_monte_carlo(mix_config: dict, gas_scenario: dict,
@@ -40,7 +41,8 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
                     price_areas_cfg: dict[str, dict] | None = None,
                     price_area_correlations: dict[tuple[str, str], float] | None = None,
                     price_areas_correlated: bool = True,
-                    enable_ntc_faults: bool = True) -> dict:
+                    enable_ntc_faults: bool = True,
+                    storage_cfg: dict[str, dict] | None = None) -> dict:
     """Run a Monte Carlo simulation of the electricity market.
 
     For each run: builds fresh generators (new stochastic fuel price paths),
@@ -85,6 +87,11 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
         enable_ntc_faults: If ``False``, all interconnections are forced to
             :class:`~energy_sim.reliability.PerfectReliability` — useful to
             isolate the price effect of faults from other noise sources.
+        storage_cfg: Optional mapping ``name -> storage_params`` (see
+            :data:`~energy_sim.config.STORAGE_UNITS`). When ``None`` or
+            empty, no battery storage is included. When supplied, Phase 4
+            of the dispatch is executed each run, and per-run storage
+            aggregates are populated.
 
     Returns:
         dict: Aggregated results with keys:
@@ -149,6 +156,22 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
               attribution of cross-border flows divided by load), shape
               ``(n_runs,)``, in gCO₂/kWh. Always populated; equals
               ``carbon_intensity`` when no interconnections are active.
+
+            When storage is active, additional keys:
+
+            - ``'storage_names'`` (list[str]): Ordered unit names.
+            - ``'storage_energy_cycled_mwh'`` (np.ndarray): Total energy
+              discharged per unit per run, shape ``(n_runs, n_storage)``,
+              in MWh.
+            - ``'storage_revenue_eur'`` (np.ndarray): Net revenue per
+              unit per run, shape ``(n_runs, n_storage)``, in EUR
+              (discharge revenue minus charge cost).
+            - ``'storage_equivalent_cycles'`` (np.ndarray): Equivalent
+              full cycles per unit per run, shape ``(n_runs, n_storage)``.
+            - ``'storage_avg_soc'`` (np.ndarray): Time-average SOC per
+              unit per run, shape ``(n_runs, n_storage)``, as a fraction.
+            - ``'storage_monthly_avg_soc'`` (np.ndarray): Monthly average
+              SOC per unit per run, shape ``(n_runs, n_storage, 12)``.
     """
     tg = TimeGrid()
     if holiday_calendar is not None:
@@ -225,6 +248,18 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
     # territorial figure already exposed in ``carbon_intensity``.
     carbon_intensity_consumption = []
 
+    # ── Storage accumulators ──────────────────────────────────────────
+    has_storage = bool(storage_cfg)
+    storage_units_template = build_storage_units(storage_cfg)
+    n_storage = len(storage_units_template)
+    storage_unit_names = [s.name for s in storage_units_template]
+
+    storage_energy_cycled_rows: list[np.ndarray] = []
+    storage_revenue_rows: list[np.ndarray] = []
+    storage_equiv_cycles_rows: list[np.ndarray] = []
+    storage_avg_soc_rows: list[np.ndarray] = []
+    storage_monthly_soc_rows: list[np.ndarray] = []
+
     for run in range(n_runs):
         # RNG separation: derive three independent streams from a single
         # SeedSequence so that the stochastic sources (generators, foreign
@@ -248,7 +283,11 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
         else:
             realizations = None
 
-        result = dispatch_year(gens, load, realizations)
+        # Build fresh storage units each run (they carry no run-specific
+        # state at construction — SOC is initialized inside dispatch_year).
+        su = build_storage_units(storage_cfg) if has_storage else None
+
+        result = dispatch_year(gens, load, realizations, storage_units=su)
 
         avg_prices.append(result.marginal_price.mean())
         total_curtailment.append(result.curtailment.sum())
@@ -375,6 +414,42 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
                    if total_energy_kwh > 0 else 0.0)
         carbon_intensity_consumption.append(ci_cons)
 
+        # ── Storage per-run aggregates ───────────────────────────────
+        if has_storage and n_storage > 0:
+            sp = result.storage_power_pu      # (n_storage, T), + = discharge
+            soc_arr = result.storage_soc      # (n_storage, T)
+
+            # Total energy discharged per unit (MWh).
+            discharged_pu_h = np.maximum(sp, 0.0).sum(axis=1) * 0.25
+            energy_mwh = discharged_pu_h * P_BASE * 1000.0
+            storage_energy_cycled_rows.append(energy_mwh)
+
+            # Revenue: Σ storage_power × marginal_price × dt × P_BASE × 1000.
+            # Positive discharge at high price → positive revenue;
+            # negative charge at low price → negative cost.
+            # Units: pu · EUR/MWh · 0.25h · P_BASE(GW) · 1000(MW/GW) = EUR.
+            revenue = (sp * result.marginal_price[np.newaxis, :]
+                       * 0.25 * P_BASE * 1000.0).sum(axis=1)
+            storage_revenue_rows.append(revenue)
+
+            # Equivalent full cycles: discharged_energy / usable_capacity.
+            ecap_mwh = np.array(
+                [s.energy_capacity_gwh * 1000.0
+                 * (s.soc_max_frac - s.soc_min_frac)
+                 for s in storage_units_template])
+            equiv = np.where(ecap_mwh > 0, energy_mwh / ecap_mwh, 0.0)
+            storage_equiv_cycles_rows.append(equiv)
+
+            # Time-average SOC per unit.
+            storage_avg_soc_rows.append(soc_arr.mean(axis=1))
+
+            # Monthly average SOC: (n_storage, 12).
+            monthly_soc = np.zeros((n_storage, 12))
+            for m in range(1, 13):
+                mask = tg.month == m
+                monthly_soc[:, m - 1] = soc_arr[:, mask].mean(axis=1)
+            storage_monthly_soc_rows.append(monthly_soc)
+
     emissions_by_tech = {k: np.array(v) for k, v in emissions_by_tech_lists.items()}
 
     # Per-link aggregates: stack rows or return empty arrays for uniform shape
@@ -412,6 +487,28 @@ def run_monte_carlo(mix_config: dict, gas_scenario: dict,
             _stack_or_empty_monthly(econ_benefit_monthly_rows),
         'co2_benefit_monthly_tons':
             _stack_or_empty_monthly(co2_benefit_monthly_rows),
+        # Storage aggregates
+        'storage_names': storage_unit_names,
+        'storage_energy_cycled_mwh': (
+            np.stack(storage_energy_cycled_rows, axis=0)
+            if storage_energy_cycled_rows
+            else np.zeros((n_runs, n_storage))),
+        'storage_revenue_eur': (
+            np.stack(storage_revenue_rows, axis=0)
+            if storage_revenue_rows
+            else np.zeros((n_runs, n_storage))),
+        'storage_equivalent_cycles': (
+            np.stack(storage_equiv_cycles_rows, axis=0)
+            if storage_equiv_cycles_rows
+            else np.zeros((n_runs, n_storage))),
+        'storage_avg_soc': (
+            np.stack(storage_avg_soc_rows, axis=0)
+            if storage_avg_soc_rows
+            else np.zeros((n_runs, n_storage))),
+        'storage_monthly_avg_soc': (
+            np.stack(storage_monthly_soc_rows, axis=0)
+            if storage_monthly_soc_rows
+            else np.zeros((n_runs, n_storage, 12))),
     }
 
 
@@ -789,3 +886,71 @@ def sweep_fuel_prices_2d(base_mix: dict,
                   f"CI={ci_matrix[i, j]:.0f} gCO₂/kWh")
 
     return price_matrix, ci_matrix
+
+
+def sweep_storage_capacity(
+    base_mix: dict,
+    gas_scenario: dict,
+    power_gw: float,
+    energy_gwh_range: np.ndarray,
+    coal_scenario: dict | None = None,
+    co2_scenario: dict | None = None,
+    n_runs: int = 20,
+    seed: int = RANDOM_SEED,
+) -> list[dict]:
+    """Sweep battery energy capacity and collect revenue/price statistics.
+
+    For each energy capacity in ``energy_gwh_range``, runs a Monte Carlo
+    simulation with a single aggregated BESS at fixed power rating and
+    collects mean and std of annual revenue, electricity price, and SOC.
+    This answers the key economic question: "what is the optimal storage
+    duration for this mix?".
+
+    Args:
+        base_mix: Base generation mix dictionary.
+        gas_scenario: Gas price scenario parameters.
+        power_gw: Fixed power capacity for the BESS (GW).
+        energy_gwh_range: Array of energy capacities to sweep (GWh).
+        coal_scenario: Coal price scenario parameters. If ``None``,
+            defaults to ``COAL_SCENARIOS['base']``.
+        co2_scenario: CO2 price scenario parameters. If ``None``,
+            defaults to ``CO2_SCENARIOS['base']``.
+        n_runs: MC runs per capacity point. Defaults to 20.
+        seed: Base random seed.
+
+    Returns:
+        list[dict]: One dict per capacity level with keys:
+            ``'energy_gwh'``, ``'revenue_mean'``, ``'revenue_std'``,
+            ``'price_mean'``, ``'price_std'``, ``'avg_soc'``,
+            ``'equiv_cycles'``.
+    """
+    results = []
+    for gwh in energy_gwh_range:
+        cfg = {
+            'sweep_bess': {
+                'energy_capacity_gwh': float(gwh),
+                'power_capacity_gw': power_gw,
+            }
+        }
+        mc = run_monte_carlo(
+            base_mix, gas_scenario,
+            coal_scenario=coal_scenario,
+            co2_scenario=co2_scenario,
+            n_runs=n_runs, seed=seed,
+            storage_cfg=cfg,
+        )
+        rev = mc['storage_revenue_eur'][:, 0]
+        results.append({
+            'energy_gwh': float(gwh),
+            'revenue_mean': float(rev.mean()),
+            'revenue_std': float(rev.std()),
+            'price_mean': float(mc['avg_price'].mean()),
+            'price_std': float(mc['avg_price'].std()),
+            'avg_soc': float(mc['storage_avg_soc'][:, 0].mean()),
+            'equiv_cycles': float(
+                mc['storage_equivalent_cycles'][:, 0].mean()),
+        })
+        print(f"  E={gwh:.1f} GWh: revenue={rev.mean() / 1e6:+.1f} M\u20ac, "
+              f"price={mc['avg_price'].mean():.1f} EUR/MWh, "
+              f"cycles={results[-1]['equiv_cycles']:.0f}")
+    return results

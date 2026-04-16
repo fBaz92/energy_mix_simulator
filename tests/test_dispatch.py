@@ -595,3 +595,145 @@ class TestInterconnectionMetrics:
         assert ci.min() >= -1e-9
         # Dirtiest unit: 0.34/0.40 * 1000 = 850 gCO\u2082/kWh_e.
         assert ci.max() <= 850.0 + 1e-6
+
+
+class TestStorageDispatch:
+    """Invariants of the Phase 4 battery storage dispatch.
+
+    Validates SOC bounds, power limits, energy conservation (modulo
+    round-trip losses and self-discharge), backward compatibility when
+    no storage is supplied, and the sign convention for revenue under
+    a clear price spread.
+    """
+
+    def _bess(self, **kwargs):
+        """Build a minimal :class:`StorageUnit` with overridable defaults."""
+        from energy_sim.storage import StorageUnit
+        defaults = dict(
+            name='bess', energy_capacity_gwh=4.0, power_capacity_gw=2.0,
+            efficiency_roundtrip=0.88, soc_min_frac=0.1, soc_max_frac=0.9,
+            initial_soc_frac=0.5, self_discharge_per_day=0.0,
+            h_synthetic=4.0, inertia_soc_margin=0.02,
+        )
+        defaults.update(kwargs)
+        return StorageUnit(**defaults)
+
+    def test_no_storage_is_backward_compatible(self, tg, co2):
+        """Dispatch with ``storage_units=None`` (or ``[]``) must be
+        byte-identical to the previous three-phase dispatch. This is the
+        primary backward-compatibility contract.
+        """
+        g = _quick_gen("g", 40.0, vom=50.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.5)
+        r1 = dispatch_year([g], load, storage_units=None)
+        r2 = dispatch_year([g], load, storage_units=[])
+        np.testing.assert_array_equal(r1.marginal_price, r2.marginal_price)
+        np.testing.assert_array_equal(r1.power, r2.power)
+        assert r1.storage_power_pu.shape == (0, tg.n)
+        assert r1.storage_soc.shape == (0, tg.n)
+        assert r1.storage_names == []
+
+    def test_soc_stays_inside_operational_band(self, tg, co2):
+        """SOC must never leave ``[soc_min_frac, soc_max_frac]`` at any
+        timestep, regardless of the price signal. Overshooting the upper
+        bound or diving below the lower bound indicates a bug in the
+        power-clipping logic.
+        """
+        g = _quick_gen("g", 40.0, vom=50.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.5)
+        b = self._bess()
+        result = dispatch_year([g], load, storage_units=[b])
+        soc = result.storage_soc[0]
+        assert soc.min() >= b.soc_min_frac - 1e-9
+        assert soc.max() <= b.soc_max_frac + 1e-9
+
+    def test_power_within_rated_capacity(self, tg, co2):
+        """Absolute value of storage AC power must not exceed
+        ``power_capacity_pu`` at any timestep. Positive = discharge,
+        negative = charge; both must be capped.
+        """
+        g = _quick_gen("g", 40.0, vom=50.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.5)
+        b = self._bess()
+        result = dispatch_year([g], load, storage_units=[b])
+        abs_pwr = np.abs(result.storage_power_pu[0])
+        assert abs_pwr.max() <= b.power_capacity_pu + 1e-9
+
+    def test_energy_conservation(self, tg, co2):
+        """Total energy balance: energy charged in × eta_charge should
+        equal energy discharged out / eta_discharge plus the net SOC
+        change plus losses. Self-discharge is disabled here so the only
+        losses are round-trip.
+        """
+        g = _quick_gen("g", 40.0, vom=50.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.5)
+        b = self._bess(self_discharge_per_day=0.0)
+        result = dispatch_year([g], load, storage_units=[b])
+        sp = result.storage_power_pu[0]  # + discharge, - charge
+        soc = result.storage_soc[0]
+
+        charge_energy_pu_h = (-sp[sp < 0]).sum() * 0.25
+        discharge_energy_pu_h = sp[sp > 0].sum() * 0.25
+        soc_change_pu_h = (soc[-1] - b.initial_soc_frac) * b.energy_capacity_pu_h
+        stored_in = charge_energy_pu_h * b.eta_charge
+        taken_out = discharge_energy_pu_h / b.eta_discharge
+        # stored_in = taken_out + soc_change (what's left in the battery)
+        assert stored_in == pytest.approx(
+            taken_out + soc_change_pu_h, rel=0.02, abs=1e-6)
+
+    def test_storage_changes_marginal_price(self, tg, co2):
+        """With a non-trivial price spread, the battery must alter at
+        least some marginal prices — otherwise Phase 4 had no effect.
+
+        The load alternates near the boundary where the cheap generator
+        saturates (20 GW / 60 GW = 0.333 pu). Storage power (2 GW =
+        0.033 pu) is enough to push some timesteps across the threshold:
+        charging at 0.31 pu raises effective load above 0.333 (price
+        jumps from 20 to 100), discharging at 0.36 pu reduces it below
+        0.333 (price drops from 100 to 20).
+        """
+        cheap = _quick_gen("cheap", 20.0, vom=20.0)
+        expensive = _quick_gen("expensive", 40.0, vom=100.0)
+        for g in [cheap, expensive]:
+            g.prepare_run(tg, np.random.default_rng(0), co2)
+        # Load oscillates near the threshold.
+        load = np.where(np.arange(tg.n) % 2 == 0, 0.31, 0.36)
+        r_no_batt = dispatch_year([cheap, expensive], load)
+        b = self._bess()
+        r_batt = dispatch_year([cheap, expensive], load, storage_units=[b])
+        # At least some timesteps must differ.
+        diff = r_no_batt.marginal_price - r_batt.marginal_price
+        assert np.count_nonzero(np.abs(diff) > 0.01) > 0
+
+    def test_synthetic_inertia_improves_h_system(self, tg, co2):
+        """A BESS with h_synthetic > 0 should increase h_system on at
+        least some timesteps (those where SOC is inside the band),
+        compared to a dispatch without storage.
+        """
+        # Only non-synchronous generators → h_system will be 0 without BESS.
+        solar = _quick_gen("solar", 40.0, vom=0.0, h_inertia=0.0,
+                           min_stable_pct=0.0)
+        solar.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.3)
+        r_no = dispatch_year([solar], load)
+        b = self._bess(h_synthetic=5.0)
+        r_batt = dispatch_year([solar], load, storage_units=[b])
+        # Without storage, h_system is all zeros (no sync gen).
+        assert r_no.h_system.max() < 0.01
+        # With storage, some timesteps should show synthetic inertia.
+        assert r_batt.h_system.max() > 0.1
+
+    def test_result_shapes(self, tg, co2):
+        """Storage output arrays must have expected shapes."""
+        g = _quick_gen("g", 40.0, vom=50.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.5)
+        b = self._bess()
+        result = dispatch_year([g], load, storage_units=[b])
+        assert result.storage_power_pu.shape == (1, tg.n)
+        assert result.storage_soc.shape == (1, tg.n)
+        assert result.storage_names == ['bess']

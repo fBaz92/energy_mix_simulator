@@ -1024,3 +1024,149 @@ def plot_generation_mix_pie(mc_results: dict, mix_config: dict,
     plt.savefig(out_path, dpi=150)
     plt.close()
     print(f"Saved: {out_path}")
+
+
+# ── Storage visualizations ─────────────────────────────────────────────
+
+
+def plot_storage_soc_timeseries(
+    dispatch_result,
+    out_path: str,
+) -> None:
+    """Annual SOC timeseries for each storage unit from a single dispatch.
+
+    Plots the full 35040-point SOC trace with a translucent fill between
+    the trace and the lower operational bound. Horizontal dashed lines
+    mark ``soc_min_frac`` and ``soc_max_frac``. Each unit occupies its
+    own subplot.
+
+    Args:
+        dispatch_result: :class:`~energy_sim.dispatch.DispatchResult` from
+            a single :func:`~energy_sim.dispatch.dispatch_year` call.
+        out_path: File path to save the figure (PNG).
+    """
+    n_storage = dispatch_result.storage_soc.shape[0]
+    if n_storage == 0:
+        print(f"No storage units \u2014 skipping {out_path}")
+        return
+
+    fig, axes = plt.subplots(n_storage, 1, figsize=(14, 3.5 * n_storage + 1),
+                             sharex=True, squeeze=False)
+    n_t = dispatch_result.storage_soc.shape[1]
+    x = np.arange(n_t) / QUARTERS_PER_DAY  # day of year
+
+    month_starts_doy = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    for si in range(n_storage):
+        ax = axes[si, 0]
+        soc = dispatch_result.storage_soc[si]
+        ax.fill_between(x, 0, soc, alpha=0.3, color='#1565C0')
+        ax.plot(x, soc, lw=0.4, color='#1565C0')
+        ax.axhline(0.1, ls='--', lw=0.8, color='red', alpha=0.6,
+                   label='SOC min/max')
+        ax.axhline(0.9, ls='--', lw=0.8, color='red', alpha=0.6)
+        ax.set_ylabel('SOC (fraction)')
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_title(dispatch_result.storage_names[si])
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(alpha=0.3)
+
+    axes[-1, 0].set_xlabel('Day of year')
+    axes[-1, 0].set_xticks(month_starts_doy)
+    axes[-1, 0].set_xticklabels(month_labels)
+    fig.suptitle('Battery SOC \u2014 annual profile', fontsize=13, y=1.01)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_storage_soc_monthly(mc_results: dict, out_path: str) -> None:
+    """Monthly average SOC bar chart from Monte Carlo results.
+
+    Shows one bar per month per storage unit (grouped), with error bars
+    representing one standard deviation across MC runs. The seasonal
+    pattern is expected to show higher SOC in summer (photovoltaic-driven
+    charging) and lower SOC in winter.
+
+    Args:
+        mc_results: Output of :func:`~energy_sim.simulation.run_monte_carlo`.
+            Requires ``'storage_names'`` and ``'storage_monthly_avg_soc'``
+            (shape ``(n_runs, n_storage, 12)``).
+        out_path: File path to save the figure (PNG).
+    """
+    names = mc_results['storage_names']
+    if not names:
+        print(f"No storage units \u2014 skipping {out_path}")
+        return
+
+    monthly = mc_results['storage_monthly_avg_soc']  # (n_runs, n_s, 12)
+    n_s = len(names)
+    months = np.arange(12)
+    month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    group_w = 0.8
+    bar_w = group_w / max(n_s, 1)
+    cmap = plt.get_cmap('tab10')
+
+    for si, name in enumerate(names):
+        offset = (si - (n_s - 1) / 2) * bar_w
+        means = monthly[:, si, :].mean(axis=0)
+        stds = monthly[:, si, :].std(axis=0)
+        ax.bar(months + offset, means, bar_w, yerr=stds,
+               color=cmap(si % 10), capsize=3, alpha=0.85,
+               label=f'{name} (avg {means.mean():.2f})')
+
+    ax.set_xticks(months)
+    ax.set_xticklabels(month_labels)
+    ax.set_ylabel('Average SOC (fraction)')
+    ax.set_title('Monthly average battery SOC')
+    ax.legend(loc='upper right', fontsize=8)
+    ax.grid(axis='y', alpha=0.3)
+    ax.set_ylim(0, 1)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")
+
+
+def plot_storage_revenue_vs_capacity(
+    sweep_results: list[dict],
+    out_path: str,
+) -> None:
+    """Storage revenue vs energy capacity sizing curve.
+
+    Each point in ``sweep_results`` is a dict from a
+    :func:`~energy_sim.simulation.run_monte_carlo` run with a different
+    storage sizing. The plot shows the mean annual revenue (EUR) versus
+    the energy capacity (GWh), with error bars for std across MC runs.
+
+    Args:
+        sweep_results: List of dicts, each with keys ``'energy_gwh'``
+            (float), ``'revenue_mean'`` (float), ``'revenue_std'`` (float).
+        out_path: File path to save the figure (PNG).
+    """
+    if not sweep_results:
+        print(f"Empty sweep results \u2014 skipping {out_path}")
+        return
+
+    gwh = np.array([d['energy_gwh'] for d in sweep_results])
+    rev_mean = np.array([d['revenue_mean'] for d in sweep_results])
+    rev_std = np.array([d['revenue_std'] for d in sweep_results])
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.errorbar(gwh, rev_mean / 1e6, yerr=rev_std / 1e6,
+                fmt='o-', capsize=4, color='#1565C0', lw=2)
+    ax.axhline(0, ls='--', color='black', lw=0.6)
+    ax.set_xlabel('Energy capacity (GWh)')
+    ax.set_ylabel('Annual revenue (M\u20ac)')
+    ax.set_title('Storage revenue vs capacity sizing')
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    print(f"Saved: {out_path}")

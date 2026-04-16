@@ -17,6 +17,7 @@ energy_sim/
 ├── dispatch.py        # Vectorized merit-order dispatch with inertia/reserve constraints
 ├── simulation.py      # run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
 │                      #   build_incremental_heatmap (Δ price finite-difference analysis)
+├── storage.py         # StorageUnit class, build_storage_units factory
 ├── visualization.py   # All plotting functions incl. plot_incremental_heatmap
 │                      #   (side-effect only, no logic to test)
 └── output/            # Generated PNGs
@@ -28,8 +29,9 @@ tests/
 ├── test_config.py     # Constants, _solar_envelope(), dict completeness, ITALIAN_MIX
 ├── test_models.py     # TimeGrid calendar metadata, LoadProfile shape/noise/weekday/holiday
 ├── test_generators.py # Price models, availability models, Generator, build_generators
-├── test_dispatch.py   # Merit order, marginal pricing, load balance, inertia fix, curtailment
-└── test_simulation.py # MC reproducibility, sweep results, heatmap shapes, incremental heatmap, price sanity
+├── test_dispatch.py   # Merit order, marginal pricing, load balance, inertia fix, curtailment, storage
+├── test_simulation.py # MC reproducibility, sweep results, heatmap shapes, incremental heatmap, price sanity
+└── test_storage.py    # StorageUnit validation, properties, inertia contribution, factory
 
 notebooks/
 └── wind_solar_analysis.ipynb  # Visual analysis of wind/solar profiles and distributions
@@ -81,7 +83,7 @@ python -m pytest tests/ -v              # all tests (~2s)
 python -m pytest tests/ -v -m "not slow" # skip slow MC sweeps
 ```
 
-134 tests covering config, models, generators, dispatch, and simulation. Tests marked `@pytest.mark.slow` involve multiple MC sweep runs.
+244 tests covering config, models, generators, dispatch, simulation, and storage. Tests marked `@pytest.mark.slow` involve multiple MC sweep runs.
 
 ## Performance Notes
 
@@ -202,7 +204,7 @@ Design:
 Explicit non-goals (for now): loop flows, market coupling (simultaneous clearing), DC load flow, transmission losses as a function of flow, and multi-zone sequential clearing.
 
 ### 7. Battery Storage
-**Status**: not started
+**Status**: implemented
 **Priority**: medium — most impactful missing flexibility resource
 **Depends on**: items 1–6 (storage value depends on price spreads shaped by the full generation mix and interconnections)
 
@@ -215,7 +217,22 @@ Implementation:
 - Track SOC timeseries, charge/discharge power, and revenue in `DispatchResult`.
 - New visualization: SOC profile over time; storage revenue vs capacity sizing curves.
 
-### 8. Web Application
+### 8. Educational Notebook Series
+**Status**: implemented
+**Priority**: medium — essential for onboarding and documentation
+**Depends on**: items 1–7 (notebooks cover all implemented features)
+
+A series of 11 Jupyter notebooks in `notebooks/` that walk users through every core concept — from basic building blocks to the full policy analysis pipeline. Each notebook is self-contained, includes theory, code walkthrough, visualizations, and interactive parameter exploration.
+
+Structure (4 tiers):
+- **Tier 1 — Fundamentals** (standalone): `01_time_grid_and_load`, `02_fuel_and_carbon_prices`, `03_renewable_availability`, `04_generators_and_merit_order`
+- **Tier 2 — Core engine** (builds on Tier 1): `05_dispatch_engine`, `06_monte_carlo_and_sensitivity`
+- **Tier 3 — Advanced modules** (standalone, assumes Tier 1–2 knowledge): `07_fuel_price_sensitivity`, `08_emissions_tracking`, `09_interconnections`, `10_battery_storage`
+- **Tier 4 — Capstone**: `11_full_analysis_pipeline` (reproduces `main.py` with commentary, custom scenario comparison)
+
+Conventions: English language, consistent structure (Introduction → Theory → Code → Visualizations → Play with parameters → Key takeaways), reduced MC runs (10–20) for interactivity (<2 min per notebook). Existing notebooks (`wind_solar_analysis.ipynb`, `phase6_interconnections.ipynb`) are kept as-is.
+
+### 9. Web Application
 **Status**: not started
 **Priority**: low — large standalone project, implement after core model features are stable
 **Depends on**: all previous items (the web app exposes the full model, so the model should be feature-complete first)

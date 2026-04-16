@@ -1,7 +1,7 @@
 """
-Vectorized merit-order dispatch engine with inertia constraints.
+Vectorized merit-order dispatch engine with inertia and storage constraints.
 
-Implements a three-phase dispatch algorithm:
+Implements a four-phase dispatch algorithm:
 
 1. **Merit-order dispatch** (vectorized): sorts generators by SRMC, stacks
    them in order of increasing cost, and dispatches to meet load. The marginal
@@ -22,16 +22,31 @@ Implements a three-phase dispatch algorithm:
    additional generation is dispatched (up to NTC) from the cheapest
    unused headroom with ``SRMC ≤ export_floor``. The marginal price is
    updated to the SRMC of the last-called unit.
+
+4. **Storage dispatch** (sequential, stateful): a rolling-percentile
+   arbitrage strategy over Phase 1–3 baseline prices. When the current
+   price is in the cheapest quartile, the battery charges (adding load);
+   when in the most expensive quartile, it discharges (displacing the
+   marginal unit). SOC evolves sequentially. The marginal price is
+   re-evaluated per timestep to reflect the changed load/generation
+   balance. BESS units also contribute synthetic inertia when their SOC
+   is sufficiently far from the operational bounds; this contribution is
+   folded into ``h_system`` at the end.
 """
 
 import numpy as np
 from dataclasses import dataclass, field
 
-from energy_sim.config import H_MIN_SECONDS, P_PEAK_GW, P_BASE, QUARTERS_PER_HOUR
+from energy_sim.config import (
+    H_MIN_SECONDS, P_PEAK_GW, P_BASE, QUARTERS_PER_HOUR,
+    STORAGE_PERCENTILE_WINDOW_QH, STORAGE_CHARGE_PERCENTILE,
+    STORAGE_DISCHARGE_PERCENTILE,
+)
 from energy_sim.generators import Generator
 from energy_sim.interconnections import (
     InterconnectionRealization, VirtualImportGenerator,
 )
+from energy_sim.storage import StorageUnit
 
 
 @dataclass
@@ -148,6 +163,15 @@ class DispatchResult:
             collapses pu·GWh · (g/kWh) = pu·10⁶·g = pu·tons (the factor
             10⁶ kWh/GWh cancels the factor 10⁻⁶ ton/g). The export
             portion is not credited as a negative footprint.
+        storage_power_pu (np.ndarray): Battery AC-side power per unit per
+            timestep, shape ``(n_storage, 35040)``. Sign convention:
+            positive = discharge (battery → grid), negative = charge
+            (grid → battery). Zero when no storage units are supplied.
+        storage_soc (np.ndarray): State of charge per unit per timestep,
+            shape ``(n_storage, 35040)``, as a fraction in
+            ``[soc_min_frac, soc_max_frac]``.
+        storage_names (list[str]): Names matching the rows of
+            :attr:`storage_power_pu`.
     """
 
     power: np.ndarray
@@ -166,20 +190,77 @@ class DispatchResult:
     emissions_imported_tons: np.ndarray = field(
         default_factory=lambda: np.zeros((0, 0)))
     ic_metrics: 'InterconnectionMetrics | None' = None
+    storage_power_pu: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    storage_soc: np.ndarray = field(
+        default_factory=lambda: np.zeros((0, 0)))
+    storage_names: list[str] = field(default_factory=list)
+
+
+def _redispatch_timestep(
+    t: int,
+    effective_load: float,
+    n_units: int,
+    srmc_all: np.ndarray,
+    avail_all: np.ndarray,
+    power: np.ndarray,
+    marginal_price: np.ndarray,
+) -> None:
+    """Re-run the merit-order stack at a single timestep.
+
+    Updates ``power[:, t]`` and ``marginal_price[t]`` **in place** to
+    reflect the changed ``effective_load``. This is the single-timestep
+    equivalent of Phase 1 — sort by SRMC, stack, clip, find the marginal
+    unit — but operates on pre-computed arrays to avoid re-allocating.
+
+    Called by Phase 4 (storage dispatch) whenever a charge or discharge
+    decision changes the effective load at a given timestep. The merit
+    order is re-evaluated from scratch (not incrementally) because the
+    changed load may shift which units clear and which sit below their
+    minimum stable output. This is O(n_units·log(n_units)) per call,
+    which is negligible for the ~5–10 units in the typical Italian mix.
+
+    Args:
+        t: Timestep index (0 to 35039).
+        effective_load: Net load (original load ± storage power) in p.u.
+        n_units: Number of units in the merit-order stack.
+        srmc_all: SRMC array, shape ``(n_units, n_t)``.
+        avail_all: Available power array, shape ``(n_units, n_t)``.
+        power: Dispatched power matrix, shape ``(n_units, n_t)``.
+            **Modified in place**.
+        marginal_price: Marginal price array, shape ``(n_t,)``.
+            **Modified in place**.
+    """
+    srmc_t = srmc_all[:, t]
+    avail_t = avail_all[:, t]
+    order = np.argsort(srmc_t)
+    remaining = effective_load
+    for idx in order:
+        if remaining <= 0:
+            power[idx, t] = 0.0
+        else:
+            take = min(avail_t[idx], remaining)
+            power[idx, t] = take
+            remaining -= take
+    dispatched_mask = power[:, t] > 0
+    if dispatched_mask.any():
+        marginal_price[t] = srmc_t[dispatched_mask].max()
+    else:
+        marginal_price[t] = 0.0
 
 
 def dispatch_year(
     generators: list[Generator],
     load: np.ndarray,
     interconnection_realizations: list[InterconnectionRealization] | None = None,
+    storage_units: list[StorageUnit] | None = None,
 ) -> DispatchResult:
     """Run merit-order dispatch for one simulated year.
 
-    The dispatch proceeds in three phases described in the module
-    docstring. When ``interconnection_realizations`` is ``None`` (or
-    empty), Phase 3 is skipped and the result is identical to a
-    dispatch without cross-border exchanges — preserving full
-    backward compatibility with existing callers.
+    The dispatch proceeds in four phases described in the module
+    docstring. Optional phases are skipped when their inputs are not
+    supplied — preserving full backward compatibility with existing
+    callers.
 
     Args:
         generators: List of :class:`~energy_sim.generators.Generator` objects
@@ -191,11 +272,15 @@ def dispatch_year(
             :class:`~energy_sim.interconnections.VirtualImportGenerator`
             and appended to the merit-order stack; its export path is
             consumed by Phase 3.
+        storage_units: Optional list of :class:`StorageUnit` objects. When
+            supplied, Phase 4 is executed: a rolling-percentile arbitrage
+            strategy charges/discharges the batteries sequentially,
+            updating the generation stack and marginal price per timestep.
 
     Returns:
         DispatchResult: Aggregated dispatch results for the year,
-            including cross-border flows when interconnections are
-            supplied.
+            including cross-border flows and storage arrays when their
+            respective inputs are supplied.
     """
     interconnection_realizations = interconnection_realizations or []
     n_domestic = len(generators)
@@ -386,6 +471,127 @@ def dispatch_year(
         foreign_prices = np.zeros((0, n_t))
         emissions_imported_tons = np.zeros((0, n_t))
 
+    # ── Phase 4: storage dispatch (sequential, stateful) ─────────────
+    #
+    # Uses the Phase 1–3 marginal price as the baseline for a rolling-
+    # percentile arbitrage strategy. The battery charges (adds load) when
+    # the current price is in the cheapest quartile of a trailing window
+    # and discharges (displaces the marginal unit) when the price is in
+    # the most expensive quartile. SOC evolves sequentially.
+    #
+    # For each timestep affected by the battery, the generation stack and
+    # marginal price are updated to reflect the changed load/generation
+    # balance:
+    # - Charge: re-dispatches the timestep with load + charge_power.
+    # - Discharge: reduces generation from the most expensive dispatched
+    #   unit(s), and updates the marginal price to the new marginal unit.
+    #
+    # BESS synthetic inertia is folded into ``h_system`` at the end.
+    storage_units = storage_units or []
+    n_storage = len(storage_units)
+
+    if n_storage > 0:
+        storage_power_arr = np.zeros((n_storage, n_t))  # + = discharge
+        storage_soc_arr = np.zeros((n_storage, n_t))
+        baseline_price = marginal_price.copy()
+
+        # Pre-compute per-unit quantities to avoid repeated property calls.
+        s_pwr_pu = np.array([s.power_capacity_pu for s in storage_units])
+        s_ecap_puh = np.array([s.energy_capacity_pu_h for s in storage_units])
+        s_eta_c = np.array([s.eta_charge for s in storage_units])
+        s_eta_d = np.array([s.eta_discharge for s in storage_units])
+        s_sd_qh = np.array([s.self_discharge_per_qh for s in storage_units])
+        s_soc_min = np.array([s.soc_min_frac for s in storage_units])
+        s_soc_max = np.array([s.soc_max_frac for s in storage_units])
+
+        soc = np.array([s.initial_soc_frac for s in storage_units])  # mutable
+
+        window = STORAGE_PERCENTILE_WINDOW_QH
+        p_charge_pct = STORAGE_CHARGE_PERCENTILE
+        p_discharge_pct = STORAGE_DISCHARGE_PERCENTILE
+
+        for t in range(n_t):
+            # Rolling-percentile thresholds from the baseline price.
+            w_start = max(0, t - window)
+            price_window = baseline_price[w_start:t + 1]
+            th_charge = np.percentile(price_window, p_charge_pct)
+            th_discharge = np.percentile(price_window, p_discharge_pct)
+
+            current_price = marginal_price[t]
+
+            for si in range(n_storage):
+                # Apply self-discharge first.
+                soc[si] *= (1.0 - s_sd_qh[si])
+
+                if current_price <= th_charge and soc[si] < s_soc_max[si]:
+                    # ── Charge ─────────────────────────────────────────
+                    # How much can we store?  Limited by power and by the
+                    # remaining headroom in the SOC band (AC-side).
+                    soc_room_pu_h = (
+                        (s_soc_max[si] - soc[si])
+                        * s_ecap_puh[si] / s_eta_c[si])
+                    max_ac_pu_h = min(s_pwr_pu[si] * 0.25, soc_room_pu_h)
+                    charge_ac_pu = max_ac_pu_h / 0.25  # avg power this qh
+
+                    if charge_ac_pu > 1e-12:
+                        # Re-dispatch this timestep with augmented load.
+                        eff_load_t = load[t] + charge_ac_pu
+                        _redispatch_timestep(
+                            t, eff_load_t, n_units, srmc_all, avail_all,
+                            power, marginal_price)
+                        current_price = marginal_price[t]
+
+                        soc[si] += (charge_ac_pu * 0.25
+                                    * s_eta_c[si] / s_ecap_puh[si])
+                        soc[si] = min(soc[si], s_soc_max[si])
+                        storage_power_arr[si, t] = -charge_ac_pu
+
+                elif current_price >= th_discharge and soc[si] > s_soc_min[si]:
+                    # ── Discharge ──────────────────────────────────────
+                    soc_avail_pu_h = (
+                        (soc[si] - s_soc_min[si])
+                        * s_ecap_puh[si] * s_eta_d[si])
+                    max_ac_pu_h = min(s_pwr_pu[si] * 0.25, soc_avail_pu_h)
+                    discharge_ac_pu = max_ac_pu_h / 0.25
+
+                    if discharge_ac_pu > 1e-12:
+                        # Reduce load for the merit-order re-dispatch.
+                        eff_load_t = max(load[t] - discharge_ac_pu, 0.0)
+                        _redispatch_timestep(
+                            t, eff_load_t, n_units, srmc_all, avail_all,
+                            power, marginal_price)
+                        current_price = marginal_price[t]
+
+                        soc[si] -= (discharge_ac_pu * 0.25
+                                    / s_eta_d[si] / s_ecap_puh[si])
+                        soc[si] = max(soc[si], s_soc_min[si])
+                        storage_power_arr[si, t] = discharge_ac_pu
+
+                storage_soc_arr[si, t] = soc[si]
+
+        # Fold BESS synthetic inertia into h_system for timesteps where
+        # the SOC is inside the operational band.
+        for t in range(n_t):
+            wh_extra = 0.0
+            w_extra = 0.0
+            for si in range(n_storage):
+                wh, w = storage_units[si].inertia_contribution(
+                    storage_soc_arr[si, t])
+                wh_extra += wh
+                w_extra += w
+            if w_extra > 0:
+                sync_online_t = (power[:, t] > 0) & is_sync
+                wh_sync = (h_values[sync_online_t]
+                           * capacity_pu[sync_online_t]).sum()
+                w_sync = capacity_pu[sync_online_t].sum()
+                total_wh = wh_sync + wh_extra
+                total_w = w_sync + w_extra
+                if total_w > 1e-12:
+                    h_system[t] = total_wh / total_w
+    else:
+        storage_power_arr = np.zeros((0, n_t))
+        storage_soc_arr = np.zeros((0, n_t))
+
     # Territorial CO₂ emissions: kg per quarter-hour per unit.
     # power_pu * P_BASE(GW) * 0.25(h) = energy in GWh
     # GWh * 1000 = MWh_e; MWh_e / efficiency = MWh_th; MWh_th * emission_factor(tCO₂/MWh_th) = tCO₂
@@ -481,4 +687,7 @@ def dispatch_year(
         foreign_prices=foreign_prices,
         emissions_imported_tons=emissions_imported_tons,
         ic_metrics=ic_metrics,
+        storage_power_pu=storage_power_arr,
+        storage_soc=storage_soc_arr,
+        storage_names=[s.name for s in storage_units],
     )
