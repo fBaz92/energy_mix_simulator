@@ -4,7 +4,12 @@
  * The poll hook (useSimulation) auto-refetches every 500ms while the
  * simulation is pending or running, and stops polling once it completes.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type {
   SimulationFullResult,
@@ -57,6 +62,25 @@ export function useSimulationResults(id: number | null) {
       );
       return res.data;
     },
+  });
+}
+
+/**
+ * Fetch full results for multiple simulations in parallel.
+ * Used by the Compare page to load 2-4 simulations side-by-side.
+ */
+export function useSimulationResultsBatch(ids: number[]) {
+  return useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ["simulation-results", id],
+      staleTime: Infinity,
+      queryFn: async (): Promise<SimulationFullResult> => {
+        const res = await api.get<SimulationFullResult>(
+          `/api/simulations/${id}/results`
+        );
+        return res.data;
+      },
+    })),
   });
 }
 

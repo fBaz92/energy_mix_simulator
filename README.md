@@ -137,7 +137,7 @@ Items implemented (see `CLAUDE.md` for details):
 6. ✅ Import/export model (interconnections)
 7. ✅ Battery storage
 8. ✅ Educational notebook series (11 tiered notebooks)
-9. 🚧 Web application (phases 1–4 done: backend, scenario editor, results dashboard with 6 charts; phases 5–6 remaining: interconnection/storage charts, comparison view)
+9. ✅ Web application — FastAPI backend, scenario editor, results dashboard with 12 Plotly charts (core + interconnections + storage), side-by-side comparison, lazy-loaded Plotly bundle
 
 ## Performance
 

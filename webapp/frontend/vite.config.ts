@@ -20,4 +20,22 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // Split the Plotly bundle into its own chunk so the shell loads fast.
+    // Plotly weighs ~4.5 MB and is only needed on result/compare pages.
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (id.includes("node_modules/plotly.js") || id.includes("node_modules/react-plotly.js")) {
+            return "plotly";
+          }
+          if (id.includes("node_modules/react")) {
+            return "react-vendor";
+          }
+        },
+      },
+    },
+    // Plotly is large by nature; silence the warning.
+    chunkSizeWarningLimit: 1024,
+  },
 });
