@@ -18,6 +18,12 @@ import { EmissionsBreakdown } from "@/components/charts/EmissionsBreakdown";
 import { GenerationMixPie } from "@/components/charts/GenerationMixPie";
 import { CarbonIntensityScatter } from "@/components/charts/CarbonIntensityScatter";
 import { InertiaDistribution } from "@/components/charts/InertiaDistribution";
+import { InterconnectionFlows } from "@/components/charts/InterconnectionFlows";
+import { ImportExportHours } from "@/components/charts/ImportExportHours";
+import { EconomicBenefitMonthly } from "@/components/charts/EconomicBenefitMonthly";
+import { Co2BenefitMonthly } from "@/components/charts/Co2BenefitMonthly";
+import { StorageSocMonthly } from "@/components/charts/StorageSocMonthly";
+import { StorageStats } from "@/components/charts/StorageStats";
 
 function StatCard({
   label,
@@ -183,6 +189,98 @@ export function ResultsPage() {
             description="Distribution across MC runs (H_min = 3.5s)"
           >
             <InertiaDistribution avgInertia={results.avg_inertia} />
+          </ChartCard>
+        </div>
+      )}
+
+      {/* Interconnection section — shown only when links are enabled */}
+      {results && results.interconnection_names.length > 0 && (
+        <div className="space-y-4 pt-4">
+          <div className="border-t pt-4">
+            <h2 className="text-xl font-bold tracking-tight">
+              Cross-border exchanges
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {results.interconnection_names.length} interconnections active
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <ChartCard
+              title="Flow summary"
+              description="Gross import / export / net, with foreign price and NTC saturation"
+              className="md:col-span-2"
+            >
+              <InterconnectionFlows
+                names={results.interconnection_names}
+                importGrossTwh={results.import_gross_twh}
+                exportGrossTwh={results.export_gross_twh}
+                netImportTwh={results.net_import_twh}
+                foreignPriceMean={results.foreign_price_mean}
+                ntcImportSaturationPct={results.ntc_import_saturation_pct}
+              />
+            </ChartCard>
+            <ChartCard
+              title="Import / export hours"
+              description="Time each link spends in each flow state"
+            >
+              <ImportExportHours
+                names={results.interconnection_names}
+                importHours={results.import_hours}
+                exportHours={results.export_hours}
+              />
+            </ChartCard>
+            <ChartCard
+              title="Economic benefit"
+              description="Monthly congestion-rent contribution per link"
+            >
+              <EconomicBenefitMonthly
+                names={results.interconnection_names}
+                monthlyBenefitEur={results.economic_benefit_monthly_eur}
+              />
+            </ChartCard>
+            <ChartCard
+              title="CO₂ benefit"
+              description="Monthly signed CO₂ impact per link (+ = avoided)"
+              className="md:col-span-2"
+            >
+              <Co2BenefitMonthly
+                names={results.interconnection_names}
+                monthlyCo2Tons={results.co2_benefit_monthly_tons}
+              />
+            </ChartCard>
+          </div>
+        </div>
+      )}
+
+      {/* Storage section — shown only when storage units are enabled */}
+      {results && results.storage_names.length > 0 && (
+        <div className="space-y-4 pt-4">
+          <div className="border-t pt-4">
+            <h2 className="text-xl font-bold tracking-tight">
+              Battery storage
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {results.storage_names.length} storage unit
+              {results.storage_names.length > 1 ? "s" : ""} active
+            </p>
+          </div>
+          <ChartCard title="Per-unit statistics">
+            <StorageStats
+              names={results.storage_names}
+              revenueEur={results.storage_revenue_eur}
+              equivalentCycles={results.storage_equivalent_cycles}
+              avgSoc={results.storage_avg_soc}
+              energyCycledMwh={results.storage_energy_cycled_mwh}
+            />
+          </ChartCard>
+          <ChartCard
+            title="Monthly average SOC"
+            description="Seasonal pattern of state-of-charge"
+          >
+            <StorageSocMonthly
+              names={results.storage_names}
+              monthlyAvgSoc={results.storage_monthly_avg_soc}
+            />
           </ChartCard>
         </div>
       )}
