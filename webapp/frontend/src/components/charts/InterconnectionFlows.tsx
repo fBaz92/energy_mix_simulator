@@ -4,8 +4,8 @@
  *
  * Mirrors ``plot_interconnection_flows_summary`` from the matplotlib layer.
  */
-import Plot from "react-plotly.js";
 import type { Data } from "plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, plotlyConfig } from "./plotlyConfig";
 
 interface InterconnectionFlowsProps {

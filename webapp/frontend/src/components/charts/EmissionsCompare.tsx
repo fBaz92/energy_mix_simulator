@@ -1,8 +1,8 @@
 /**
  * Grouped bar chart comparing per-technology CO₂ emissions across simulations.
  */
-import Plot from "react-plotly.js";
 import type { Data } from "plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, colorFor, plotlyConfig } from "./plotlyConfig";
 
 interface SimSeries {

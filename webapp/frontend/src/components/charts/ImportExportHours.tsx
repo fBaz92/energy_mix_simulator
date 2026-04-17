@@ -4,8 +4,8 @@
  *
  * Mirrors ``plot_import_export_hours`` from the matplotlib layer.
  */
-import Plot from "react-plotly.js";
 import type { Data } from "plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, plotlyConfig } from "./plotlyConfig";
 
 interface ImportExportHoursProps {

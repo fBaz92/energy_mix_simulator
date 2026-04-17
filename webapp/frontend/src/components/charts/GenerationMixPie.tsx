@@ -5,7 +5,7 @@
  * dispatched energy, since we don't track hourly energy per tech in
  * the MC aggregate. This gives a quick overview of the mix structure.
  */
-import Plot from "react-plotly.js";
+import { Plot } from "./Plot";
 import { colorFor, plotlyConfig } from "./plotlyConfig";
 import type { GeneratorParams } from "@/types/api";
 

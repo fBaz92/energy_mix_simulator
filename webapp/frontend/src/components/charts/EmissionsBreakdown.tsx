@@ -4,7 +4,7 @@
  * Shows the mean annual emissions (Mt) per technology across MC runs.
  * Only technologies with non-zero emissions are displayed.
  */
-import Plot from "react-plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, colorFor, plotlyConfig } from "./plotlyConfig";
 
 interface EmissionsBreakdownProps {

@@ -26,7 +26,10 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: (id) => {
-          if (id.includes("node_modules/plotly.js") || id.includes("node_modules/react-plotly.js")) {
+          if (
+            id.includes("node_modules/plotly.js") ||
+            id.includes("node_modules/react-plotly.js")
+          ) {
             return "plotly";
           }
           if (id.includes("node_modules/react")) {

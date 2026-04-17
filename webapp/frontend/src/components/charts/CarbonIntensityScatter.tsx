@@ -5,7 +5,7 @@
  * emissions (e.g. high gas price runs tend to have higher CO2 if
  * coal picks up the slack).
  */
-import Plot from "react-plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, plotlyConfig } from "./plotlyConfig";
 
 interface CarbonIntensityScatterProps {

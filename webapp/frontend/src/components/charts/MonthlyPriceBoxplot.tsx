@@ -4,7 +4,7 @@
  * Each box shows the spread of the monthly average price across MC runs,
  * highlighting seasonal patterns (e.g. winter peak, summer solar dip).
  */
-import Plot from "react-plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, plotlyConfig } from "./plotlyConfig";
 
 interface MonthlyPriceBoxplotProps {

@@ -4,8 +4,8 @@
  * Shows the uncertainty/spread induced by stochastic fuel prices, weather,
  * and load noise. A vertical line marks the mean.
  */
-import Plot from "react-plotly.js";
 import type { Data } from "plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, plotlyConfig } from "./plotlyConfig";
 
 interface PriceDistributionProps {

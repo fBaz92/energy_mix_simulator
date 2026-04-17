@@ -3,8 +3,8 @@
  * Used on the Compare page to visualise how the price distribution
  * shifts across scenarios (lower = better mix).
  */
-import Plot from "react-plotly.js";
 import type { Data } from "plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, plotlyConfig } from "./plotlyConfig";
 
 interface Series {

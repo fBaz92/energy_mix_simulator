@@ -4,8 +4,8 @@
  * Reveals seasonal patterns (e.g. higher SOC in shoulder months when price
  * spreads are largest). Mirrors ``plot_storage_soc_monthly``.
  */
-import Plot from "react-plotly.js";
 import type { Data } from "plotly.js";
+import { Plot } from "./Plot";
 import { baseLayout, plotlyConfig } from "./plotlyConfig";
 
 interface StorageSocMonthlyProps {
