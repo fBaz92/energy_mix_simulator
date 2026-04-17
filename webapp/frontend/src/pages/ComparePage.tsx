@@ -109,11 +109,12 @@ export function ComparePage() {
                         <Check className="h-3.5 w-3.5 text-primary" />
                       )}
                       <span className="text-sm font-medium truncate">
-                        {s.scenario_name}
+                        #{s.id} {s.scenario_name}
                       </span>
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      {s.n_runs} runs · {numOrDash(s.avg_price_mean)} EUR/MWh
+                      {s.n_runs} runs · {numOrDash(s.avg_price_mean)} EUR/MWh ·{" "}
+                      {new Date(s.created_at).toLocaleDateString()}
                     </div>
                   </button>
                 );
@@ -156,7 +157,7 @@ export function ComparePage() {
                           className="inline-block h-2 w-2 rounded-full mr-2"
                           style={{ backgroundColor: COMPARE_COLORS[i] }}
                         />
-                        {s.scenario_name}
+                        #{s.id} {s.scenario_name}
                       </th>
                     ))}
                   </tr>

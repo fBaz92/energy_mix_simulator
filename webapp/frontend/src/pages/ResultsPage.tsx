@@ -54,13 +54,40 @@ export function ResultsPage() {
   const { id } = useParams<{ id: string }>();
   const simId = id ? parseInt(id) : null;
 
-  const { data: sim } = useSimulation(simId);
+  const {
+    data: sim,
+    isLoading: simLoading,
+    error: simError,
+  } = useSimulation(simId);
   const { data: results, isLoading: resultsLoading } =
     useSimulationResults(sim?.status === "completed" ? simId : null);
   const { data: scenario } = useScenario(sim?.scenario_id ?? null);
 
-  if (!sim) {
+  if (simLoading) {
     return <div className="p-8 text-sm text-muted-foreground">Loading...</div>;
+  }
+
+  if (simError || !sim) {
+    return (
+      <div className="p-8 space-y-4 max-w-2xl">
+        <Button asChild variant="ghost" size="sm">
+          <Link to="/simulations">
+            <ArrowLeft className="h-4 w-4 mr-1" />
+            Back to simulations
+          </Link>
+        </Button>
+        <Card>
+          <CardContent className="py-12 text-center space-y-2">
+            <p className="text-sm text-destructive font-medium">
+              Simulation not found
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Simulation #{simId} does not exist or has been deleted.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   if (sim.status !== "completed") {

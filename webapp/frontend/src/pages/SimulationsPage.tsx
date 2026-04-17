@@ -68,6 +68,9 @@ export function SimulationsPage() {
                 <div className="flex items-start justify-between">
                   <div>
                     <CardTitle className="text-base flex items-center gap-3">
+                      <span className="text-muted-foreground font-normal">
+                        #{s.id}
+                      </span>
                       {s.scenario_name || `Simulation #${s.id}`}
                       <span className={statusBadge(s.status)}>{s.status}</span>
                     </CardTitle>

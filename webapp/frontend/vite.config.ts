@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
@@ -9,6 +10,12 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  optimizeDeps: {
+    // Force Vite to pre-bundle these CJS sub-paths as ESM. Without this,
+    // `react-plotly.js/factory` is served as raw CJS which breaks the
+    // default-export resolution under browser ESM.
+    include: ["react-plotly.js/factory", "plotly.js/dist/plotly.min.js"],
   },
   server: {
     port: 5173,
@@ -40,5 +47,11 @@ export default defineConfig({
     },
     // Plotly is large by nature; silence the warning.
     chunkSizeWarningLimit: 1024,
+  },
+  test: {
+    globals: true,
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    css: false,
   },
 });

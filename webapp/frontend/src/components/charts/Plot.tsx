@@ -1,18 +1,53 @@
 /**
  * Plot wrapper that handles the CJS/ESM interop for react-plotly.js.
  *
- * react-plotly.js is a CommonJS-only package. Under Vite with code-splitting,
- * the default import can come back as the module object instead of the
- * component itself (causing "Element type is invalid" runtime errors).
+ * Background: react-plotly.js is a CommonJS-only package. Under Vite the
+ * module shape can end up double-wrapped — ``{default: {default: fn}}`` —
+ * because ``react-plotly.js/factory`` is a sub-path that is not auto-
+ * converted to ESM the same way top-level packages are. Direct default
+ * imports then fail at runtime with "createPlotlyComponent is not a
+ * function".
  *
- * We import via the factory and pass it the pre-bundled browser build
- * (``plotly.js/dist/plotly.min.js``). The pre-bundled distribution avoids
- * Node-only dependencies (``buffer``, ``stream``, ``assert``) that the
- * raw source of plotly.js pulls in for image export features.
+ * Strategy: namespace-import the factory and probe up to two ``.default``
+ * levels to find the callable. This is robust against both the
+ * ``{default: fn}`` and ``{default: {default: fn}}`` shapes. The
+ * pre-bundled ``plotly.js/dist/plotly.min.js`` is used instead of the raw
+ * source to avoid Node-only deps (``buffer``, ``stream``, ``assert``).
  */
-import createPlotlyComponent from "react-plotly.js/factory";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore — the dist file ships with no TypeScript types
-import Plotly from "plotly.js/dist/plotly.min.js";
+import * as factoryModule from "react-plotly.js/factory";
+// @ts-expect-error — the dist file ships with no TypeScript types
+import * as plotlyModule from "plotly.js/dist/plotly.min.js";
+
+type Factory = (plotly: unknown) => React.ComponentType<Record<string, unknown>>;
+
+function unwrapDefault<T = unknown>(mod: unknown): T {
+  // Walk up to two levels of ``.default`` wrapping, stop as soon as we
+  // hit a callable (factory) or a non-object (the plotly bundle root).
+  let current: unknown = mod;
+  for (let depth = 0; depth < 3; depth++) {
+    if (typeof current === "function") return current as T;
+    if (
+      current &&
+      typeof current === "object" &&
+      "default" in current
+    ) {
+      current = (current as { default: unknown }).default;
+      continue;
+    }
+    break;
+  }
+  return current as T;
+}
+
+const createPlotlyComponent = unwrapDefault<Factory>(factoryModule);
+
+if (typeof createPlotlyComponent !== "function") {
+  throw new Error(
+    "Plot.tsx: react-plotly.js/factory did not expose a callable factory. " +
+      "Inspect the module namespace shape in the browser devtools."
+  );
+}
+
+const Plotly = unwrapDefault(plotlyModule);
 
 export const Plot = createPlotlyComponent(Plotly);

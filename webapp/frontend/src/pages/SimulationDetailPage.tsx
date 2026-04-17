@@ -13,10 +13,30 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 export function SimulationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const simId = id ? parseInt(id) : null;
-  const { data: sim, isLoading } = useSimulation(simId);
+  const { data: sim, isLoading, error } = useSimulation(simId);
 
-  if (isLoading || !sim) {
+  if (isLoading) {
     return <div className="p-8">Loading simulation...</div>;
+  }
+
+  if (error || !sim) {
+    return (
+      <div className="p-8 space-y-4 max-w-2xl">
+        <Card>
+          <CardContent className="py-12 text-center space-y-2">
+            <p className="text-sm text-destructive font-medium">
+              Simulation not found
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Simulation #{simId} does not exist or has been deleted.
+            </p>
+            <Button asChild variant="outline" size="sm" className="mt-4">
+              <Link to="/simulations">Back to simulations</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   const isRunning = sim.status === "pending" || sim.status === "running";
