@@ -310,6 +310,73 @@ class TestStorageAggregates:
         assert (cycles < 500).all()
 
 
+class TestPriceSetterAggregates:
+    """Monte-Carlo-level aggregates for the price-setter tracking feature.
+
+    The dispatch layer is responsible for populating
+    :attr:`DispatchResult.price_setter_idx`; :func:`run_monte_carlo` rolls
+    it up into three per-technology dictionaries. These tests guard the
+    roll-up invariants that the webapp depends on: shapes, totals, and
+    consistency between ``hours`` and ``pct`` aggregates.
+    """
+
+    def _run(self, n_runs=2):
+        """Run a short MC with the default Italian mix (no storage/IC)."""
+        return run_monte_carlo(
+            ITALIAN_MIX, GAS_SCENARIOS['base'], n_runs=n_runs, seed=42)
+
+    def test_price_setter_aggregates_present(self):
+        """After a run, all three price-setter dicts must be populated for
+        every technology present in the mix.
+        """
+        r = self._run(n_runs=2)
+        assert r.price_setter_hours_by_tech, \
+            "price_setter_hours_by_tech must be non-empty after a MC run"
+        assert set(r.price_setter_hours_by_tech.keys()) == \
+            set(r.price_setter_pct_by_tech.keys()) == \
+            set(r.price_setter_by_month_hour.keys())
+
+    def test_price_setter_shapes(self):
+        """Per-tech arrays must have consistent shapes across the three
+        dicts: ``hours`` and ``pct`` are ``(n_runs,)``, ``by_month_hour``
+        is ``(n_runs, 12, 24)``.
+        """
+        r = self._run(n_runs=3)
+        for tech in r.price_setter_hours_by_tech:
+            assert r.price_setter_hours_by_tech[tech].shape == (3,)
+            assert r.price_setter_pct_by_tech[tech].shape == (3,)
+            assert r.price_setter_by_month_hour[tech].shape == (3, 12, 24)
+
+    def test_hours_pct_consistency(self):
+        """``pct`` must equal ``hours / 8760`` for every tech and every run."""
+        r = self._run(n_runs=2)
+        for tech, hrs in r.price_setter_hours_by_tech.items():
+            np.testing.assert_allclose(
+                r.price_setter_pct_by_tech[tech], hrs / 8760.0, rtol=1e-12)
+
+    def test_month_hour_total_matches_hours(self):
+        """Summing the ``(12, 24)`` month-hour matrix must equal the scalar
+        total hours for that technology (per run).
+        """
+        r = self._run(n_runs=2)
+        for tech, mh in r.price_setter_by_month_hour.items():
+            total_from_matrix = mh.sum(axis=(1, 2))
+            np.testing.assert_allclose(
+                total_from_matrix,
+                r.price_setter_hours_by_tech[tech],
+                rtol=1e-12)
+
+    def test_total_hours_bounded_by_year(self):
+        """Across all techs, hours summed per run must not exceed 8760 —
+        a single quarter-hour can have at most one price-setter, and the
+        sentinel ``-1`` (unserved) is not counted in any tech bucket.
+        """
+        r = self._run(n_runs=2)
+        by_tech = np.stack(list(r.price_setter_hours_by_tech.values()))
+        total_per_run = by_tech.sum(axis=0)
+        assert (total_per_run <= 8760.0 + 1e-6).all()
+
+
 @pytest.mark.slow
 class TestSweepTechnology:
     """Verify the technology penetration sweep utility."""

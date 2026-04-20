@@ -93,6 +93,19 @@ def mc_result_to_dict(result: MonteCarloResult) -> dict:
         "storage_avg_soc": _ndarray_to_list(result.storage_avg_soc),
         "storage_monthly_avg_soc": _ndarray_to_list(
             result.storage_monthly_avg_soc),
+        # Price-setter (per-tech dicts)
+        "price_setter_hours_by_tech": {
+            k: _ndarray_to_list(v)
+            for k, v in result.price_setter_hours_by_tech.items()
+        },
+        "price_setter_pct_by_tech": {
+            k: _ndarray_to_list(v)
+            for k, v in result.price_setter_pct_by_tech.items()
+        },
+        "price_setter_by_month_hour": {
+            k: _ndarray_to_list(v)
+            for k, v in result.price_setter_by_month_hour.items()
+        },
     }
 
 

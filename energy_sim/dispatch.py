@@ -172,6 +172,12 @@ class DispatchResult:
             ``[soc_min_frac, soc_max_frac]``.
         storage_names (list[str]): Names matching the rows of
             :attr:`storage_power_pu`.
+        price_setter_idx (np.ndarray): Index into :attr:`gen_names` of the
+            unit that set the system marginal price at each timestep,
+            shape ``(35040,)``, dtype ``int16``. Sentinel ``-1`` when the
+            marginal price is zero (all load unserved or no unit dispatched).
+            Derived post-hoc from the dispatch outcome at each phase; no
+            new random draws are introduced, so reproducibility is preserved.
     """
 
     power: np.ndarray
@@ -195,6 +201,8 @@ class DispatchResult:
     storage_soc: np.ndarray = field(
         default_factory=lambda: np.zeros((0, 0)))
     storage_names: list[str] = field(default_factory=list)
+    price_setter_idx: np.ndarray = field(
+        default_factory=lambda: np.zeros(0, dtype=np.int16))
 
 
 def _redispatch_timestep(
@@ -205,6 +213,7 @@ def _redispatch_timestep(
     avail_all: np.ndarray,
     power: np.ndarray,
     marginal_price: np.ndarray,
+    price_setter_idx: np.ndarray | None = None,
 ) -> None:
     """Re-run the merit-order stack at a single timestep.
 
@@ -230,6 +239,9 @@ def _redispatch_timestep(
             **Modified in place**.
         marginal_price: Marginal price array, shape ``(n_t,)``.
             **Modified in place**.
+        price_setter_idx: Optional array of shape ``(n_t,)``. When provided,
+            the element ``price_setter_idx[t]`` is updated in place with the
+            index of the price-setting unit (or ``-1`` if nothing dispatched).
     """
     srmc_t = srmc_all[:, t]
     avail_t = avail_all[:, t]
@@ -245,8 +257,14 @@ def _redispatch_timestep(
     dispatched_mask = power[:, t] > 0
     if dispatched_mask.any():
         marginal_price[t] = srmc_t[dispatched_mask].max()
+        if price_setter_idx is not None:
+            dispatched_indices = np.where(dispatched_mask)[0]
+            price_setter_idx[t] = dispatched_indices[
+                np.argmax(srmc_t[dispatched_indices])]
     else:
         marginal_price[t] = 0.0
+        if price_setter_idx is not None:
+            price_setter_idx[t] = -1
 
 
 def dispatch_year(
@@ -317,6 +335,13 @@ def dispatch_year(
     srmc_dispatched = np.where(power > 0, srmc_all, -np.inf)
     marginal_price = np.maximum(srmc_dispatched.max(axis=0), 0)
 
+    # Track which unit sets the marginal price at each timestep. The
+    # price-setter is the dispatched unit with the highest SRMC. Sentinel
+    # -1 marks timesteps where the marginal price is zero (nothing
+    # dispatched or total unserved).
+    price_setter_idx = np.argmax(srmc_dispatched, axis=0).astype(np.int16)
+    price_setter_idx[marginal_price <= 0] = -1
+
     # Phase 2: inertia fix. Imports contribute no synchronous inertia and
     # cannot be used to satisfy H_MIN — the existing algorithm already
     # respects this because it only considers is_sync == True units.
@@ -365,6 +390,11 @@ def dispatch_year(
                 dm = power[:, t] > 0
                 if dm.any():
                     marginal_price[t] = srmc_all[dm, t].max()
+                    dm_indices = np.where(dm)[0]
+                    price_setter_idx[t] = dm_indices[
+                        np.argmax(srmc_all[dm_indices, t])]
+                else:
+                    price_setter_idx[t] = -1
 
     # ── Phase 3: export adjustment ──────────────────────────────────────
     #
@@ -429,6 +459,7 @@ def dispatch_year(
 
                 remaining_demand = ntc_k
                 last_srmc_called = marginal_price[t]
+                last_ui_called = -1
                 for ui in eligible:
                     if remaining_demand <= 1e-12:
                         break
@@ -440,11 +471,16 @@ def dispatch_year(
                     export_power[k, t] += take
                     remaining_demand -= take
                     last_srmc_called = float(srmc_all[ui, t])
+                    last_ui_called = int(ui)
 
                 # Marginal price rises to the SRMC of the last unit called
-                # (if any was called for this link).
+                # (if any was called for this link). When it does, that unit
+                # becomes the price-setter for this timestep.
                 if export_power[k, t] > 0:
-                    marginal_price[t] = max(marginal_price[t], last_srmc_called)
+                    if last_srmc_called > marginal_price[t]:
+                        marginal_price[t] = last_srmc_called
+                        if last_ui_called >= 0:
+                            price_setter_idx[t] = last_ui_called
 
     # Net import = import_dispatched - export_power (per interconnection).
     # Import-dispatched is the dispatched power of each virtual import
@@ -538,7 +574,7 @@ def dispatch_year(
                         eff_load_t = load[t] + charge_ac_pu
                         _redispatch_timestep(
                             t, eff_load_t, n_units, srmc_all, avail_all,
-                            power, marginal_price)
+                            power, marginal_price, price_setter_idx)
                         current_price = marginal_price[t]
 
                         soc[si] += (charge_ac_pu * 0.25
@@ -559,7 +595,7 @@ def dispatch_year(
                         eff_load_t = max(load[t] - discharge_ac_pu, 0.0)
                         _redispatch_timestep(
                             t, eff_load_t, n_units, srmc_all, avail_all,
-                            power, marginal_price)
+                            power, marginal_price, price_setter_idx)
                         current_price = marginal_price[t]
 
                         soc[si] -= (discharge_ac_pu * 0.25
@@ -690,4 +726,5 @@ def dispatch_year(
         storage_power_pu=storage_power_arr,
         storage_soc=storage_soc_arr,
         storage_names=[s.name for s in storage_units],
+        price_setter_idx=price_setter_idx,
     )

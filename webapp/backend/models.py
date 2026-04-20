@@ -334,6 +334,14 @@ class SimulationFullResult(BaseModel):
         storage_equivalent_cycles: Shape (n_runs, n_storage).
         storage_avg_soc: Shape (n_runs, n_storage).
         storage_monthly_avg_soc: Shape (n_runs, n_storage, 12).
+        price_setter_hours_by_tech: Hours/year the unit set the marginal
+            price, {tech: [per_run_hours]}. The ``'import'`` key aggregates
+            all virtual import links.
+        price_setter_pct_by_tech: Share of year each tech set the price
+            (``hours / 8760``), {tech: [per_run_fraction]}.
+        price_setter_by_month_hour: Hours each tech set the price broken
+            down by (month 1..12, hour-of-day 0..23),
+            {tech: [per_run_matrix_12x24]}.
     """
 
     simulation_id: int
@@ -377,6 +385,58 @@ class SimulationFullResult(BaseModel):
     storage_monthly_avg_soc: list[list[list[float]]] = Field(
         default_factory=list)
 
+    # Price-setter
+    price_setter_hours_by_tech: dict[str, list[float]] = Field(
+        default_factory=dict)
+    price_setter_pct_by_tech: dict[str, list[float]] = Field(
+        default_factory=dict)
+    price_setter_by_month_hour: dict[str, list[list[list[float]]]] = Field(
+        default_factory=dict)
+
+
+class TimeseriesResponse(BaseModel):
+    """Per-run quarter-hour time-series payload for a single simulation.
+
+    Served by ``GET /api/simulations/{id}/timeseries``. Intentionally
+    kept to a single run at a time: the raw data for all runs of a
+    100-MC simulation would exceed 300 MB after JSON serialisation,
+    whereas a single run with 10 series stays under 400 KB.
+
+    Attributes:
+        simulation_id: Primary key of the source simulation.
+        run: Zero-based index of the MC run whose data is attached.
+        n_runs: Total number of runs available in the Parquet file.
+            The frontend uses this to render a run selector (0..n_runs-1).
+        available: All series columns present in the Parquet file.
+            Useful when the client needs to decide which charts are
+            renderable for this scenario (e.g. ``power_nuclear`` is
+            absent when the mix has zero nuclear capacity).
+        gen_names: Ordered generator names in the same position that
+            ``price_setter_idx`` indexes into. Use together with
+            ``gen_types`` to collapse virtual import links into a
+            single ``'import'`` bucket for the duration-curve chart.
+        gen_types: Per-unit technology labels (``'gas'``, ``'solar'``,
+            ``'import'``, …). Same length and ordering as ``gen_names``.
+        storage_names: Ordered storage unit names — pairs with
+            ``storage_power_*`` / ``storage_soc_*`` columns.
+        interconnection_names: Ordered link names — pairs with
+            ``net_import_*`` / ``foreign_price_*`` columns.
+        series: Requested time-series as dict ``{name: list[float]}``.
+            Length of each list equals the number of quarter-hours in
+            a year (35 040). Empty when the ``series`` query parameter
+            is omitted.
+    """
+
+    simulation_id: int
+    run: int
+    n_runs: int
+    available: list[str]
+    gen_names: list[str] = Field(default_factory=list)
+    gen_types: list[str] = Field(default_factory=list)
+    storage_names: list[str] = Field(default_factory=list)
+    interconnection_names: list[str] = Field(default_factory=list)
+    series: dict[str, list[float]] = Field(default_factory=dict)
+
 
 # ---------------------------------------------------------------------------
 # Defaults response
@@ -407,3 +467,126 @@ class DefaultsResponse(BaseModel):
     price_areas: dict
     price_area_correlations: list[list[str | float]]
     storage_units: dict
+
+
+# ---------------------------------------------------------------------------
+# Sweep runner (PART C)
+# ---------------------------------------------------------------------------
+
+class SweepCreate(BaseModel):
+    """Request body for ``POST /api/sweeps``.
+
+    Defines a parameter sweep over one or two dimensions of an existing
+    scenario. Each grid point executes ``n_runs_per_point`` Monte Carlo
+    runs keeping all other scenario parameters fixed; only the scalar
+    metrics (mean price, CO₂ intensity, inertia, curtailment) are
+    persisted per point.
+
+    Attributes:
+        scenario_id: Base scenario providing the default parameter set.
+        name: Human-readable sweep label shown in the list view.
+        sweep_type: ``'1d'`` for a single-parameter curve, ``'2d'`` for a
+            two-parameter heatmap.
+        parameter_a: Dotted override path — see
+            :mod:`webapp.backend.sweeps` for the whitelist. Examples:
+            ``mix.nuclear.capacity_gw``, ``gas.mu``, ``co2.mu``.
+        values_a: Grid values for ``parameter_a``.
+        parameter_b: Second dotted path, required for ``2d`` sweeps.
+        values_b: Grid values for ``parameter_b`` (2d only).
+        n_runs_per_point: Monte Carlo runs per grid point. Kept low
+            (10–30) so sweeps finish in minutes rather than hours.
+    """
+
+    scenario_id: int
+    name: str
+    sweep_type: str  # '1d' or '2d'
+    parameter_a: str
+    values_a: list[float]
+    parameter_b: str | None = None
+    values_b: list[float] | None = None
+    n_runs_per_point: int = 20
+
+
+class SweepOut(BaseModel):
+    """Lightweight sweep row (no ``results_json``) for the list view.
+
+    Attributes:
+        id: Primary key.
+        scenario_id: FK to scenarios.
+        scenario_name: Joined name for display convenience.
+        name: User-provided sweep label.
+        sweep_type: ``'1d'`` or ``'2d'``.
+        parameter_a / parameter_b: Dotted override paths.
+        values_a / values_b: Grid values (parsed from JSON in DB).
+        n_runs_per_point: MC runs per grid point.
+        status: ``pending`` | ``running`` | ``completed`` | ``failed``.
+        progress_current / progress_total: Completed and total grid
+            points. ``progress_current / progress_total`` gives a
+            fraction for progress bars.
+        error_message: Traceback when the sweep fails.
+        started_at / completed_at / created_at: ISO-8601 timestamps.
+    """
+
+    id: int
+    scenario_id: int
+    scenario_name: str | None = None
+    name: str
+    sweep_type: str
+    parameter_a: str
+    values_a: list[float]
+    parameter_b: str | None = None
+    values_b: list[float] | None = None
+    n_runs_per_point: int
+    status: str
+    progress_current: int
+    progress_total: int
+    error_message: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    created_at: str
+
+
+class SweepResultPoint(BaseModel):
+    """A single grid point's aggregate metrics.
+
+    Attributes:
+        a: Value of ``parameter_a`` at this point.
+        b: Value of ``parameter_b`` at this point (``None`` for 1D).
+        avg_price_mean: Mean annual price across the ``n_runs_per_point``
+            Monte Carlo runs at this point, EUR/MWh.
+        avg_price_std: Standard deviation of the annual price.
+        carbon_intensity_mean: Mean territorial carbon intensity,
+            gCO₂/kWh.
+        avg_inertia_mean: Mean annual system inertia (seconds).
+        curtailment_mean: Mean total curtailment, p.u.·quarter-hours.
+    """
+
+    a: float
+    b: float | None = None
+    avg_price_mean: float
+    avg_price_std: float
+    carbon_intensity_mean: float
+    avg_inertia_mean: float
+    curtailment_mean: float
+
+
+class SweepFullResult(BaseModel):
+    """Response body for ``GET /api/sweeps/{id}/results``.
+
+    Attributes:
+        sweep_id: Primary key of the sweep.
+        sweep_type: ``'1d'`` or ``'2d'``.
+        parameter_a / parameter_b: Dotted override paths (for axis labels).
+        values_a / values_b: Grid values (for axis ticks).
+        points: Per-grid-point aggregate metrics. Order is row-major
+            (``a`` slow, ``b`` fast) so the frontend can reshape to a
+            matrix in a straightforward way.
+    """
+
+    sweep_id: int
+    sweep_type: str
+    parameter_a: str
+    values_a: list[float]
+    parameter_b: str | None = None
+    values_b: list[float] | None = None
+    points: list[SweepResultPoint]

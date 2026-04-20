@@ -14,6 +14,7 @@ import { api } from "@/api/client";
 import type {
   SimulationFullResult,
   SimulationSummary,
+  TimeseriesResponse,
 } from "@/types/api";
 
 const SIMULATIONS_KEY = ["simulations"] as const;
@@ -96,6 +97,61 @@ export function useLaunchSimulation() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: SIMULATIONS_KEY });
+    },
+  });
+}
+
+/**
+ * Fetch only the time-series metadata (available columns, gen names,
+ * gen types, storage/IC names, total run count) for a simulation.
+ *
+ * Uses the same endpoint as :func:`useSimulationTimeseries` but with
+ * an empty ``series`` parameter so the backend skips the heavy Parquet
+ * read. Cached forever — the Parquet file is immutable per simulation.
+ */
+export function useTimeseriesMetadata(simulationId: number | null) {
+  return useQuery({
+    queryKey: ["simulation-timeseries-meta", simulationId],
+    enabled: simulationId !== null,
+    staleTime: Infinity,
+    queryFn: async (): Promise<TimeseriesResponse> => {
+      const res = await api.get<TimeseriesResponse>(
+        `/api/simulations/${simulationId}/timeseries`,
+        { params: { run: 0, series: "" } },
+      );
+      return res.data;
+    },
+  });
+}
+
+/**
+ * Lazy-load per-run quarter-hour time-series for a completed simulation.
+ *
+ * Requests one run at a time to keep the payload bounded. Pass an empty
+ * ``series`` array (or ``null`` for ``simulationId``) to disable the
+ * query — the ``available`` field in the response lists all columns
+ * stored in the Parquet file, which is useful for deciding which
+ * charts can be rendered for the current scenario.
+ *
+ * Results are immutable within a simulation, so they cache indefinitely
+ * (``staleTime: Infinity``).
+ */
+export function useSimulationTimeseries(
+  simulationId: number | null,
+  run: number,
+  series: string[],
+) {
+  const seriesKey = [...series].sort().join(",");
+  return useQuery({
+    queryKey: ["simulation-timeseries", simulationId, run, seriesKey],
+    enabled: simulationId !== null && series.length > 0,
+    staleTime: Infinity,
+    queryFn: async (): Promise<TimeseriesResponse> => {
+      const res = await api.get<TimeseriesResponse>(
+        `/api/simulations/${simulationId}/timeseries`,
+        { params: { run, series: series.join(",") } },
+      );
+      return res.data;
     },
   });
 }

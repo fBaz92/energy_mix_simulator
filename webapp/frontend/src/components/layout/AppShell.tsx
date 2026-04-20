@@ -3,13 +3,22 @@
  * Renders the active route via react-router Outlet.
  */
 import { NavLink, Outlet } from "react-router-dom";
-import { FlaskConical, LayoutDashboard, GitCompare, Zap } from "lucide-react";
+import {
+  BookOpen,
+  FlaskConical,
+  GitCompare,
+  LayoutDashboard,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { to: "/scenarios", label: "Scenarios", icon: FlaskConical },
   { to: "/simulations", label: "Simulations", icon: LayoutDashboard },
+  { to: "/sweeps", label: "Sweeps", icon: TrendingUp },
   { to: "/compare", label: "Compare", icon: GitCompare },
+  { to: "/wiki", label: "Wiki", icon: BookOpen },
 ] as const;
 
 export function AppShell() {

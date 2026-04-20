@@ -9,32 +9,54 @@ The core workflow: define a generation mix → run N Monte Carlo years (each 350
 ## Architecture
 
 ```
-energy_sim/
-├── config.py          # All parameters, defaults, scenarios, coefficients
-├── models.py          # TimeGrid (temporal backbone), LoadProfile (multiplicative load model)
-├── generators.py      # FuelPriceModel (O-U process), CarbonPriceModel, availability models
-│                      #   (Solar/Wind/MustRun/Dispatchable), Generator class, build_generators()
-├── dispatch.py        # Vectorized merit-order dispatch with inertia/reserve constraints
-├── simulation.py      # run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
-│                      #   build_incremental_heatmap (Δ price finite-difference analysis)
-├── storage.py         # StorageUnit class, build_storage_units factory
-├── visualization.py   # All plotting functions incl. plot_incremental_heatmap
-│                      #   (side-effect only, no logic to test)
-└── output/            # Generated PNGs
+energy_sim/                # Core simulation library (no web/UI dependencies)
+├── config.py              # Parameters, defaults, scenarios, coefficients, Italian mix
+├── models.py              # TimeGrid (temporal backbone), LoadProfile (multiplicative load)
+├── generators.py          # FuelPriceModel/CarbonPriceModel (O-U), availability models
+│                          #   (Solar/Wind/MustRun/Dispatchable), Generator, build_generators()
+├── dispatch.py            # Vectorized merit-order dispatch with inertia/reserve constraints
+├── simulation.py          # run_monte_carlo, sweep_technology, build_sensitivity_heatmap,
+│                          #   build_incremental_heatmap, fuel-price sweeps
+├── storage.py             # StorageUnit with SOC, build_storage_units factory
+├── interconnections.py    # Interconnection class: import as virtual gen, export as extra load
+├── price_areas.py         # Multi-zone price-area handling
+├── reliability.py         # Reliability/adequacy metrics
+└── visualization.py       # Matplotlib plotting (side-effect only, no logic to test)
 
-main.py                # Entry point: runs full pipeline (base case, sweeps, dispatch plots)
+main.py                    # Entry point: runs full pipeline (base case, sweeps, dispatch plots)
+output/                    # Generated PNGs
 
-tests/
-├── conftest.py        # Shared fixtures (TimeGrid, rng, make_generator, co2_model)
-├── test_config.py     # Constants, _solar_envelope(), dict completeness, ITALIAN_MIX
-├── test_models.py     # TimeGrid calendar metadata, LoadProfile shape/noise/weekday/holiday
-├── test_generators.py # Price models, availability models, Generator, build_generators
-├── test_dispatch.py   # Merit order, marginal pricing, load balance, inertia fix, curtailment, storage
-├── test_simulation.py # MC reproducibility, sweep results, heatmap shapes, incremental heatmap, price sanity
-└── test_storage.py    # StorageUnit validation, properties, inertia contribution, factory
+tests/                     # Pytest suite — shared fixtures in conftest.py
+├── test_config.py
+├── test_models.py
+├── test_generators.py
+├── test_dispatch.py
+├── test_simulation.py
+├── test_storage.py
+├── test_interconnections.py
+├── test_price_areas.py
+└── test_reliability.py
 
-notebooks/
-└── wind_solar_analysis.ipynb  # Visual analysis of wind/solar profiles and distributions
+notebooks/                 # Educational + exploratory notebooks
+├── 01_time_grid_and_load.ipynb      # Tier 1 — fundamentals
+├── 02_fuel_and_carbon_prices.ipynb
+├── 03_renewable_availability.ipynb
+├── 04_generators_and_merit_order.ipynb
+├── 05_dispatch_engine.ipynb         # Tier 2 — core engine
+├── 06_monte_carlo_and_sensitivity.ipynb
+├── 07_fuel_price_sensitivity.ipynb  # Tier 3 — advanced modules
+├── 08_emissions_tracking.ipynb
+├── 09_interconnections.ipynb
+├── 10_battery_storage.ipynb
+├── 11_full_analysis_pipeline.ipynb  # Tier 4 — capstone
+├── phase6_interconnections.ipynb    # Legacy exploratory
+└── wind_solar_analysis.ipynb        # Legacy exploratory
+
+webapp/                    # Interactive web UI (imports energy_sim/, never vice-versa)
+├── backend/               # FastAPI + SQLite; exposes scenarios/simulations/results APIs
+├── frontend/              # React + Vite + TypeScript + Plotly.js
+├── data/                  # SQLite DB + generated artifacts
+└── run.py                 # Dev launcher
 ```
 
 ## Code Conventions
@@ -59,10 +81,13 @@ Every module, class, function, and test method MUST have a detailed docstring. F
 - **Per-unit system**: all powers are normalized to P_BASE = 60 GW. Generator capacities are stored in GW but converted to p.u. internally. Graphs should show p.u. unless converting to GW for dispatch plots.
 - **Merit order is the marginal price setter**: the SRMC of the last dispatched generator sets the system marginal price at each timestep. This is the standard European day-ahead market model.
 - **Inertia constraint (H_MIN = 3.5s)**: if the weighted average inertia of online synchronous generators drops below threshold, the cheapest offline synchronous generator is forced online at minimum stable generation. Renewables are curtailed if this causes oversupply.
-- **Fuel price via Ornstein-Uhlenbeck**: mean-reverting stochastic process. Each MC run generates a fresh gas price path. Uranium and CO2 are currently constant but use the same interface.
+- **Fuel and carbon price via Ornstein-Uhlenbeck**: mean-reverting stochastic processes. Each MC run generates a fresh path. Gas, coal, and CO₂ all use the same O-U interface with their own μ/σ/θ.
 - **Wind model**: AR(1) process in Gaussian space → Weibull transform → turbine power curve. This preserves temporal autocorrelation (weather fronts last days, not hours). NOT a simple coefficient model like solar.
 - **Solar model**: deterministic envelope (month × hour Gaussian) × Markov chain cloud state (per-day, two-state). Night hours are hard-zeroed.
-- **Hydro**: must-run band at fixed capacity. Interface ready for future reservoir/energy-budget model. Do NOT try to make it dispatchable without implementing state tracking.
+- **Hydro**: currently a must-run band at fixed capacity. A reservoir/SOC-based dispatch model is planned (see `ROADMAP.md`). Do NOT try to make it dispatchable ad-hoc without state tracking — it needs the planned reservoir design.
+- **Interconnections**: imports enter the merit order as virtual generators with `srmc = foreign_price + transport_cost`; exports are post-dispatch adjustments when domestic marginal price < foreign_price − transport_cost.
+- **Storage**: battery SOC is sequential (breaks vectorization) but O(35040) per unit; charge/discharge triggered by rolling price percentiles.
+- **Library/UI separation**: `energy_sim/` is a pure numpy/scipy library with no web or plotting-UI dependencies. The webapp imports it; the reverse is never allowed.
 
 ## How to Run
 
@@ -94,162 +119,15 @@ python -m pytest tests/ -v -m "not slow" # skip slow MC sweeps
 
 ## Known Limitations
 
-- No transmission constraints (copper-plate assumption — single bus)
+- No transmission constraints inside the country (copper-plate assumption within a zone)
 - No unit commitment (min up/down times, startup sequencing)
 - No ramp-rate enforcement between timesteps (only min stable generation)
-- Hydro is a flat must-run band, not dispatchable
+- Hydro is a flat must-run band, not dispatchable (reservoir model planned — see `ROADMAP.md`)
 - No demand response or elastic demand
-- No import/export with neighboring countries (partially captured by hydro band)
+- Interconnections use a pragmatic import-as-virtual-gen / export-as-extra-load approach, not simultaneous market coupling
 - Solar envelope is symmetric around 13:00; real irradiance is slightly asymmetric
 - Wind spatial correlation not modeled (all wind farms see same wind process)
 
-## Roadmap
+## Development Direction
 
-Items are ordered so that each builds on the previous ones. Implement in sequence.
-
-**IMPORTANT**: Every time a roadmap item is implemented, this roadmap must be updated to reflect the new status (change "not started" to "implemented").
-
-### 1. CO₂ Emissions Tracking
-**Status**: implemented
-**Priority**: high — low effort, high analytical value
-**Depends on**: nothing (pure post-processing on existing dispatch output)
-
-Add per-timestep and per-generator CO₂ emission accounting. All data needed is already available: `Generator.emission_factor` (tCO₂/MWh_th), `Generator.efficiency`, and `DispatchResult.power` (p.u.).
-
-Implementation:
-- In `dispatch_year()` or as post-processing: compute `emissions[i, t] = power_pu[i, t] * P_BASE * 0.25 * emission_factor[i] / efficiency[i]` (tons CO₂ per quarter-hour).
-- Add `emissions` array (shape `(n_gen, 35040)`) to `DispatchResult`.
-- In `run_monte_carlo()`: aggregate total annual emissions (tons), average carbon intensity (gCO₂/kWh), and per-technology breakdown across MC runs.
-- New visualization: carbon intensity vs technology penetration curves; emission breakdown stacked bar.
-
-### 2. Coal Generator Type
-**Status**: implemented
-**Priority**: high — completes the fossil fuel picture
-**Depends on**: item 1 (coal's high emission factor makes CO₂ tracking essential to evaluate it)
-
-Add coal as a dispatchable thermal generator. Typical parameters for a hard-coal plant:
-- Efficiency: 38–42%
-- Emission factor: ~0.34 tCO₂/MWh_th (significantly higher than gas at 0.20)
-- Inertia H: ~5.0s
-- Min stable generation: ~45%
-- Ramp rate: ~0.02%/min (slower than gas)
-- Fuel cost: 10–15 EUR/MWh_th (cheaper than gas, but higher CO₂ cost offsets this)
-
-Implementation:
-- Add `coal` entry in `ITALIAN_MIX` (or custom mix dicts) with all standard generator parameters.
-- Fuel price model: either `ConstantFuelPrice` for fixed coal price, or a dedicated `FuelPriceModel` O-U process with coal-specific parameters (lower volatility than gas, e.g. μ=12, σ=3, θ=0.05).
-- In `build_generators()`: route `coal` to the appropriate fuel model and `DispatchableAvailability()`.
-- No dispatch engine changes needed — coal enters the merit order naturally.
-- Define coal price scenarios analogous to gas scenarios in `config.py` (e.g. `COAL_SCENARIOS = {'base': {'mu': 12, 'sigma': 3, 'theta': 0.05}, 'crisis': {'mu': 25, 'sigma': 8, 'theta': 0.05}}`).
-
-Note: with high CO₂ prices (>60 EUR/ton), coal SRMC can exceed gas SRMC ("fuel switching"), making merit-order position price-dependent. This is realistic and the model handles it correctly since SRMC is recomputed at each timestep.
-
-### 3. Stochastic CO₂ Price
-**Status**: implemented
-**Priority**: medium — low effort, enables richer scenario analysis
-**Depends on**: items 1–2 (CO₂ tracking and coal must be in place for the stochastic CO₂ price to produce meaningful fuel-switching dynamics)
-
-`CarbonPriceModel` already has the same interface as `FuelPriceModel`. Replace the `generate_path()` implementation with an O-U process. Suggested parameters: μ=65, σ=10, θ=0.05 (slower mean-reversion than gas). This interacts with coal vs gas merit-order positioning: a volatile CO₂ price creates timesteps where coal is cheaper than gas and vice versa, producing realistic fuel-switching behavior.
-
-### 4. Fuel Price Sensitivity Analysis
-**Status**: implemented
-**Priority**: high — critical for energy security assessment
-**Depends on**: items 1–3 (needs coal in the mix and CO₂ tracking to show fuel-switching and emission impacts)
-
-Add systematic sensitivity analysis of electricity price to fuel price variations, at fixed energy mix. This answers the question: "given this mix, how exposed am I to fuel price shocks?"
-
-Implementation:
-- New function `sweep_fuel_price(base_mix, fuel_type, mu_range, n_runs, seed)` in `simulation.py`. For each μ value in `mu_range`, run a full MC with the corresponding fuel price parameters, keeping the mix fixed.
-- For multi-fuel analysis: `sweep_fuel_prices_2d(base_mix, fuel_configs, n_runs, seed)` where `fuel_configs` is a dict like `{'gas': np.linspace(20, 100, 10), 'coal': np.linspace(8, 30, 6)}`. Produces a 2D heatmap of electricity price vs (gas_price, coal_price).
-- New visualizations:
-  - 1D curve: electricity price ± σ vs fuel μ for a single fuel.
-  - 2D heatmap: electricity price vs (gas μ, coal μ) — shows fuel-switching dynamics.
-  - Sensitivity coefficient: ∂(electricity_price)/∂(fuel_price) at each operating point — measures exposure.
-- Pair with CO₂ tracking (item 1) to show how emission intensity changes with fuel price (high gas price → more coal dispatch → higher emissions).
-
-### 5. Load Profile Enhancements
-**Status**: implemented
-**Priority**: medium — infrastructure already exists, just needs activation
-**Depends on**: nothing (independent, but best done before interconnections which add load complexity)
-
-`LoadProfile` already supports `set_weekday_factors()`, `set_holiday_factor()`, and `noise_sigma` in `generate()`. The `TimeGrid` has `day_of_week` and `is_holiday` attributes ready. Implementation:
-- Define default weekday factors in `config.py` (e.g. Saturday 0.85, Sunday 0.75, weekdays 1.0).
-- Define an Italian holiday calendar (day-of-year list) in `config.py`.
-- Activate both in `run_monte_carlo()` before generating the load profile.
-- Increase default `noise_sigma` from 0.02 to 0.03–0.05 for more realistic intra-day variability.
-
-### 6. Import/Export Model (Interconnections)
-**Status**: implemented
-**Priority**: medium — significant modeling addition, requires careful design
-**Depends on**: items 1–4 (the full domestic model — emissions, coal, fuel sensitivity — should be stable before adding cross-border flows)
-
-Model cross-border electricity exchanges using a pragmatic approach: imports as virtual generators in the merit order, exports as price-dependent additional load.
-
-Design:
-- New class `Interconnection` with attributes: `name` (str, e.g. "IT-FR"), `ntc_import_gw` (float, Net Transfer Capacity for import), `ntc_export_gw` (float, NTC for export), `foreign_price_model` (a `FuelPriceModel` or `ConstantFuelPrice` instance representing the neighboring market's marginal price), `transport_cost_eur_mwh` (float, transmission losses + wheeling fee).
-- **Import**: modeled as a virtual generator with `srmc = foreign_price + transport_cost` and `capacity = ntc_import_gw`. Enters the merit order alongside domestic generators. When it's cheaper than domestic alternatives, the system imports.
-- **Export**: after the merit-order dispatch, if the domestic marginal price < foreign_price - transport_cost, excess generation is "sold" up to `ntc_export_gw`. This is equivalent to adding `min(surplus, ntc_export_gw)` to the load and re-dispatching (or, more efficiently, just accounting for the additional load in a post-dispatch adjustment).
-- Configuration: add `INTERCONNECTIONS` dict in `config.py`, e.g.:
-  ```python
-  INTERCONNECTIONS = {
-      'IT-FR': {'ntc_import_gw': 3.0, 'ntc_export_gw': 2.5, 'foreign_price_mu': 50, 'foreign_price_sigma': 12, 'transport_cost': 3.0},
-      'IT-CH': {'ntc_import_gw': 4.0, 'ntc_export_gw': 1.5, 'foreign_price_mu': 45, 'foreign_price_sigma': 8, 'transport_cost': 2.0},
-      'IT-AT': {'ntc_import_gw': 1.0, 'ntc_export_gw': 0.5, 'foreign_price_mu': 55, 'foreign_price_sigma': 10, 'transport_cost': 4.0},
-  }
-  ```
-- In `dispatch_year()`: build import virtual generators from interconnections before Phase 1 merit order. After Phase 1, check for export opportunities and adjust load/dispatch accordingly.
-- Track net import/export per timestep in `DispatchResult` (new field `net_import`, shape `(n_interconnections, 35040)`).
-- New visualizations: net flow per interconnection over time; import/export duration curves; price convergence analysis.
-
-Explicit non-goals (for now): loop flows, market coupling (simultaneous clearing), DC load flow, transmission losses as a function of flow, and multi-zone sequential clearing.
-
-### 7. Battery Storage
-**Status**: implemented
-**Priority**: medium — most impactful missing flexibility resource
-**Depends on**: items 1–6 (storage value depends on price spreads shaped by the full generation mix and interconnections)
-
-Add utility-scale battery storage with inter-temporal state (SOC). Simpler than hydro reservoirs (no inflows, no evaporation).
-
-Implementation:
-- Create `StorageUnit` class with `capacity_mwh`, `power_mw`, `efficiency_roundtrip`, `soc` state.
-- In `dispatch_year()`, after merit-order dispatch: if marginal price < charge_threshold → charge; if marginal price > discharge_threshold → discharge. Thresholds can be rolling percentiles of recent prices (e.g. 25th and 75th).
-- This breaks pure vectorization — the SOC loop must be sequential. But it's only one unit, so the loop is O(35040), not O(n_gen × 35040).
-- Track SOC timeseries, charge/discharge power, and revenue in `DispatchResult`.
-- New visualization: SOC profile over time; storage revenue vs capacity sizing curves.
-
-### 8. Educational Notebook Series
-**Status**: implemented
-**Priority**: medium — essential for onboarding and documentation
-**Depends on**: items 1–7 (notebooks cover all implemented features)
-
-A series of 11 Jupyter notebooks in `notebooks/` that walk users through every core concept — from basic building blocks to the full policy analysis pipeline. Each notebook is self-contained, includes theory, code walkthrough, visualizations, and interactive parameter exploration.
-
-Structure (4 tiers):
-- **Tier 1 — Fundamentals** (standalone): `01_time_grid_and_load`, `02_fuel_and_carbon_prices`, `03_renewable_availability`, `04_generators_and_merit_order`
-- **Tier 2 — Core engine** (builds on Tier 1): `05_dispatch_engine`, `06_monte_carlo_and_sensitivity`
-- **Tier 3 — Advanced modules** (standalone, assumes Tier 1–2 knowledge): `07_fuel_price_sensitivity`, `08_emissions_tracking`, `09_interconnections`, `10_battery_storage`
-- **Tier 4 — Capstone**: `11_full_analysis_pipeline` (reproduces `main.py` with commentary, custom scenario comparison)
-
-Conventions: English language, consistent structure (Introduction → Theory → Code → Visualizations → Play with parameters → Key takeaways), reduced MC runs (10–20) for interactivity (<2 min per notebook). Existing notebooks (`wind_solar_analysis.ipynb`, `phase6_interconnections.ipynb`) are kept as-is.
-
-### 9. Web Application
-**Status**: not started
-**Priority**: low — large standalone project, implement after core model features are stable
-**Depends on**: all previous items (the web app exposes the full model, so the model should be feature-complete first)
-
-Interactive web interface for scenario definition, simulation execution, and result visualization.
-
-Architecture:
-- **Backend**: Python (FastAPI or Flask). Exposes `energy_sim/` as a library. Endpoints: CRUD for scenarios, trigger simulation runs (async, background worker), fetch results and plots.
-- **Database**: SQLite for single-user (upgrade to PostgreSQL for multi-user). Schema:
-  - `scenarios` table: id, name, mix_config (JSON), fuel_params (JSON), interconnections (JSON), p_peak_gw, n_mc_runs, created_at.
-  - `runs` table: id, scenario_id, status (pending/running/done/failed), started_at, finished_at, results (JSON with avg_price, monthly_prices, curtailment, inertia, emissions).
-  - `interconnections` table: id, scenario_id, name, ntc_import, ntc_export, foreign_price_params (JSON), transport_cost.
-- **Frontend**: Streamlit for MVP (fast to build, pure Python, good enough for internal/research use). Migrate to React + Plotly.js for production if needed.
-- **Key views**:
-  - Scenario editor: define mix (sliders for each technology's capacity), fuel price parameters (μ, σ, θ per fuel), system parameters (P_peak, H_min), interconnections.
-  - Simulation launcher: select scenario, set n_runs, launch (progress bar).
-  - Results dashboard: price distribution histograms, monthly price heatmaps, dispatch stack charts for selected days, CO₂ emission breakdowns, sensitivity curves.
-  - Scenario comparison: side-by-side price/emissions/curtailment for 2+ scenarios.
-- **Important**: the `energy_sim/` package must remain a standalone library with no web dependencies. The web app imports and calls it, never the other way around.
-- Replace matplotlib with Plotly for all web-facing visualizations (interactive zoom, hover tooltips, responsive layout). Keep matplotlib as fallback for CLI/batch mode.
+Planned features, priorities, and the distinction between done / in-progress / planned work live in `ROADMAP.md`. Keep this file focused on *what the project is* and how it works; put *where it's going* in the roadmap.

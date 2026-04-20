@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from webapp.backend.db import init_db
 from webapp.backend.routes.scenarios import router as scenarios_router
 from webapp.backend.routes.simulations import router as simulations_router
+from webapp.backend.routes.sweeps import router as sweeps_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,6 +67,7 @@ app.add_middleware(
 # Register route modules
 app.include_router(scenarios_router)
 app.include_router(simulations_router)
+app.include_router(sweeps_router)
 
 
 @app.get("/api/health")

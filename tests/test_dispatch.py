@@ -737,3 +737,122 @@ class TestStorageDispatch:
         assert result.storage_power_pu.shape == (1, tg.n)
         assert result.storage_soc.shape == (1, tg.n)
         assert result.storage_names == ['bess']
+
+
+class TestPriceSetter:
+    """Verify that ``price_setter_idx`` identifies the marginal unit at
+    each timestep across all dispatch phases.
+
+    The tracking is a post-hoc annotation on the existing dispatch outcome:
+    it never changes the dispatched power or the marginal price, so these
+    tests also guard against silent regressions where a hook point is
+    missed and the price-setter ends up pointing to the wrong unit.
+    """
+
+    def test_shape_and_dtype(self, tg, co2):
+        """``price_setter_idx`` must have shape ``(35040,)`` and dtype int16,
+        matching the contract documented on ``DispatchResult``.
+        """
+        g = _quick_gen("g", 40.0, vom=10.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.3)
+        result = dispatch_year([g], load)
+        assert result.price_setter_idx.shape == (tg.n,)
+        assert result.price_setter_idx.dtype == np.int16
+
+    def test_single_generator_sets_price(self, tg, co2):
+        """With a single dispatched generator, the price-setter must be that
+        unit at every timestep when load is positive.
+        """
+        g = _quick_gen("g", 40.0, vom=10.0)
+        g.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.3)
+        result = dispatch_year([g], load)
+        assert (result.price_setter_idx == 0).all()
+
+    def test_marginal_unit_identified_in_merit_order(self, tg, co2):
+        """With two generators and load split between peak (both needed) and
+        off-peak (only the cheap one), the price-setter at peak must point
+        to the expensive unit and at off-peak to the cheap unit.
+        """
+        cheap = _quick_gen("cheap", 20.0, vom=5.0)
+        expensive = _quick_gen("expensive", 20.0, vom=50.0)
+        rng = np.random.default_rng(0)
+        for g in [cheap, expensive]:
+            g.prepare_run(tg, rng, co2)
+        # Alternate timesteps between a load that only cheap can cover
+        # (0.1 p.u. < cheap capacity 20/60 ≈ 0.33 p.u.) and a load that
+        # requires both (0.5 p.u. > cheap capacity).
+        load = np.empty(tg.n)
+        load[::2] = 0.1
+        load[1::2] = 0.5
+        result = dispatch_year([cheap, expensive], load)
+        assert (result.price_setter_idx[::2] == 0).all()
+        assert (result.price_setter_idx[1::2] == 1).all()
+
+    def test_sentinel_when_unserved(self, tg, co2):
+        """When total capacity is insufficient, ``marginal_price`` is 0 and
+        ``price_setter_idx`` must be the sentinel ``-1`` at those
+        timesteps.
+        """
+        tiny = _quick_gen("tiny", 0.5, vom=10.0)
+        tiny.prepare_run(tg, np.random.default_rng(0), co2)
+        load = np.full(tg.n, 0.9)  # far above 0.5/60 capacity
+        result = dispatch_year([tiny], load)
+        assert (result.marginal_price[result.price_setter_idx == -1] == 0).all()
+        # In this scenario the single unit is saturated but the marginal
+        # price equals its SRMC for the dispatched fraction, so not all
+        # timesteps carry the sentinel: the contract is only that
+        # sentinel ⇔ price == 0.
+        zero_price_mask = result.marginal_price == 0
+        assert (result.price_setter_idx[zero_price_mask] == -1).all()
+
+    def test_storage_redispatch_updates_price_setter(self, tg, co2):
+        """When a BESS charges (adding load) or discharges (reducing load),
+        ``_redispatch_timestep`` must update ``price_setter_idx`` to
+        reflect the new marginal unit.
+        """
+        from energy_sim.storage import StorageUnit
+        cheap = _quick_gen("cheap", 20.0, vom=5.0)
+        expensive = _quick_gen("expensive", 30.0, vom=50.0)
+        rng = np.random.default_rng(0)
+        for g in [cheap, expensive]:
+            g.prepare_run(tg, rng, co2)
+        # Load oscillates widely so both units contribute and the BESS has
+        # reason to arbitrage.
+        load = np.where(np.arange(tg.n) % 2, 0.6, 0.1)
+        bess = StorageUnit(
+            name='bess', energy_capacity_gwh=4.0, power_capacity_gw=2.0)
+        result = dispatch_year(
+            [cheap, expensive], load, storage_units=[bess])
+        # Indices only ever take valid values (0, 1) or the sentinel; no
+        # hook point left ``price_setter_idx`` at an uninitialised value.
+        unique = np.unique(result.price_setter_idx)
+        assert set(unique.tolist()).issubset({-1, 0, 1})
+
+
+class TestPriceSetterAggregation:
+    """Aggregation of price-setter statistics is handled in
+    ``simulation.run_monte_carlo``. Here we only verify the invariants
+    that the downstream aggregator relies on at the dispatch level.
+    """
+
+    def test_price_setter_matches_marginal_srmc(self, tg, co2):
+        """For every timestep with ``marginal_price > 0``, the SRMC of the
+        unit pointed to by ``price_setter_idx`` must equal the marginal
+        price. This is the core invariant the aggregator depends on.
+        """
+        cheap = _quick_gen("cheap", 20.0, vom=5.0, fuel_price=0.0)
+        expensive = _quick_gen("expensive", 30.0, vom=50.0, fuel_price=0.0)
+        rng = np.random.default_rng(0)
+        for g in [cheap, expensive]:
+            g.prepare_run(tg, rng, co2)
+        load = np.where(np.arange(tg.n) % 2, 0.6, 0.1)
+        units = [cheap, expensive]
+        result = dispatch_year(units, load)
+        srmc_rows = np.array([u.srmc() for u in units])  # (n_units, n_t)
+        active = result.marginal_price > 0
+        ps = result.price_setter_idx[active]
+        prices = result.marginal_price[active]
+        srmc_of_setter = srmc_rows[ps, np.where(active)[0]]
+        np.testing.assert_allclose(srmc_of_setter, prices, rtol=1e-9)

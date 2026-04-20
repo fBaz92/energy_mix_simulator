@@ -48,13 +48,34 @@ CREATE TABLE IF NOT EXISTS simulations (
     mean_inertia REAL,
     started_at TEXT,
     completed_at TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    timeseries_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS simulation_results (
     simulation_id INTEGER PRIMARY KEY
         REFERENCES simulations(id) ON DELETE CASCADE,
     result_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sweeps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scenario_id INTEGER NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    sweep_type TEXT NOT NULL,           -- '1d' | '2d'
+    parameter_a TEXT NOT NULL,          -- dotted path, e.g. 'mix.nuclear.capacity_gw'
+    values_a_json TEXT NOT NULL,        -- JSON list of floats
+    parameter_b TEXT,                   -- 2d only
+    values_b_json TEXT,                 -- 2d only
+    n_runs_per_point INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    progress_current INTEGER NOT NULL DEFAULT 0,
+    progress_total INTEGER NOT NULL,
+    error_message TEXT,
+    results_json TEXT,                  -- populated on completion
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL
 );
 """
 
@@ -73,12 +94,25 @@ async def init_db() -> None:
 
     Called once during FastAPI app startup (lifespan). Safe to call
     multiple times (uses ``CREATE TABLE IF NOT EXISTS``).
+
+    Also runs idempotent schema migrations for columns added after the
+    initial release:
+    - ``simulations.timeseries_path``: path to the optional Parquet file
+      storing per-run quarter-hour time-series (added for PART B).
     """
     _DB_DIR.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(_SCHEMA)
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA foreign_keys=ON")
+        # Migration: add timeseries_path column if missing. SQLite's
+        # CREATE TABLE IF NOT EXISTS will leave old tables alone, so we
+        # check the column list and ALTER TABLE when needed.
+        cursor = await db.execute("PRAGMA table_info(simulations)")
+        existing_cols = {row[1] for row in await cursor.fetchall()}
+        if "timeseries_path" not in existing_cols:
+            await db.execute(
+                "ALTER TABLE simulations ADD COLUMN timeseries_path TEXT")
         await db.commit()
 
 
@@ -363,19 +397,238 @@ async def get_simulation_result(simulation_id: int) -> dict | None:
         return None
 
 
-async def delete_simulation(simulation_id: int) -> bool:
-    """Delete a simulation and its result.
+async def delete_simulation(simulation_id: int) -> str | None | bool:
+    """Delete a simulation and its result, returning the time-series path.
+
+    The caller is responsible for unlinking the Parquet file (if any)
+    referenced by the returned path — SQLite cannot clean up filesystem
+    artifacts on its own.
 
     Args:
         simulation_id: Primary key of the simulation to delete.
 
     Returns:
-        True if a row was deleted, False if not found.
+        The ``timeseries_path`` of the deleted row (possibly ``None``)
+        when deletion succeeded, or ``False`` when no row matched the
+        given id. Using a distinct sentinel for the not-found case
+        preserves the previous boolean contract at the call site.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA foreign_keys=ON")
+        row = await (await db.execute(
+            "SELECT timeseries_path FROM simulations WHERE id = ?",
+            (simulation_id,),
+        )).fetchone()
+        if row is None:
+            return False
+        cursor = await db.execute(
+            "DELETE FROM simulations WHERE id = ?", (simulation_id,),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            return False
+        return row["timeseries_path"]
+
+
+async def set_timeseries_path(simulation_id: int, path: str) -> None:
+    """Record the on-disk location of the Parquet time-series file.
+
+    Written by :func:`webapp.backend.tasks.run_simulation_task` after the
+    MC runner completes and :mod:`webapp.backend.timeseries_io` has
+    serialised the per-run quarter-hour arrays to disk.
+
+    Args:
+        simulation_id: Primary key of the simulation.
+        path: Absolute path (or path relative to the project root) of
+            the Parquet file.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE simulations SET timeseries_path = ? WHERE id = ?",
+            (path, simulation_id),
+        )
+        await db.commit()
+
+
+async def get_timeseries_path(simulation_id: int) -> str | None:
+    """Return the stored Parquet path for a simulation, if any.
+
+    Args:
+        simulation_id: Primary key of the simulation.
+
+    Returns:
+        The path string or ``None`` if the simulation has no
+        time-series file (legacy runs completed before PART B, or rows
+        whose Parquet payload was never written).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT timeseries_path FROM simulations WHERE id = ?",
+            (simulation_id,),
+        )).fetchone()
+        return row["timeseries_path"] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Sweep CRUD helpers
+# ---------------------------------------------------------------------------
+
+async def create_sweep(
+    scenario_id: int,
+    name: str,
+    sweep_type: str,
+    parameter_a: str,
+    values_a: list[float],
+    parameter_b: str | None,
+    values_b: list[float] | None,
+    n_runs_per_point: int,
+) -> dict[str, Any]:
+    """Insert a new sweep row with status 'pending'.
+
+    Args:
+        scenario_id: Associated scenario ID.
+        name: Human-readable label (e.g. "Nuclear 0–20 GW, base gas").
+        sweep_type: Either ``'1d'`` or ``'2d'``.
+        parameter_a: Dotted override path (e.g. ``mix.nuclear.capacity_gw``).
+        values_a: Values for parameter A.
+        parameter_b: Dotted path for 2D sweeps, otherwise ``None``.
+        values_b: Values for parameter B, otherwise ``None``.
+        n_runs_per_point: Number of MC runs executed at each grid point.
+
+    Returns:
+        Dict of the new row.
+    """
+    now = _now_iso()
+    total = len(values_a) * (len(values_b) if values_b else 1)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA foreign_keys=ON")
+        cursor = await db.execute(
+            """INSERT INTO sweeps (
+                scenario_id, name, sweep_type, parameter_a, values_a_json,
+                parameter_b, values_b_json, n_runs_per_point,
+                status, progress_total, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+            (scenario_id, name, sweep_type, parameter_a,
+             json.dumps(values_a),
+             parameter_b,
+             json.dumps(values_b) if values_b is not None else None,
+             n_runs_per_point, total, now),
+        )
+        await db.commit()
+        row = await (await db.execute(
+            "SELECT * FROM sweeps WHERE id = ?", (cursor.lastrowid,)
+        )).fetchone()
+        return dict(row)
+
+
+async def list_sweeps() -> list[dict[str, Any]]:
+    """List all sweeps with their scenario names.
+
+    Returns:
+        List of dicts with sweep fields + ``scenario_name``, ordered
+        by creation time descending.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """SELECT sw.*, sc.name as scenario_name
+               FROM sweeps sw
+               JOIN scenarios sc ON sw.scenario_id = sc.id
+               ORDER BY sw.created_at DESC"""
+        )).fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_sweep(sweep_id: int) -> dict[str, Any] | None:
+    """Fetch a sweep row by ID (including results_json if populated).
+
+    Args:
+        sweep_id: Primary key.
+
+    Returns:
+        Dict of the row, or ``None`` if not found.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT * FROM sweeps WHERE id = ?", (sweep_id,)
+        )).fetchone()
+        return dict(row) if row else None
+
+
+async def update_sweep_progress(sweep_id: int, current: int) -> None:
+    """Update the ``progress_current`` counter for a running sweep.
+
+    Called by the background runner after each grid point completes so
+    the frontend poll endpoint can render a progress bar.
+
+    Args:
+        sweep_id: Primary key.
+        current: Number of grid points completed so far.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE sweeps SET progress_current = ? WHERE id = ?",
+            (current, sweep_id),
+        )
+        await db.commit()
+
+
+async def update_sweep_status(
+    sweep_id: int,
+    status: str,
+    error_message: str | None = None,
+    results_json: str | None = None,
+) -> None:
+    """Transition a sweep to ``running`` / ``completed`` / ``failed``.
+
+    Args:
+        sweep_id: Primary key.
+        status: New status (``running``, ``completed``, or ``failed``).
+        error_message: Traceback string when transitioning to ``failed``.
+        results_json: Serialised ``SweepFullResult`` payload when the
+            sweep completes.
+    """
+    now = _now_iso()
+    async with aiosqlite.connect(DB_PATH) as db:
+        if status == "running":
+            await db.execute(
+                "UPDATE sweeps SET status = ?, started_at = ? WHERE id = ?",
+                (status, now, sweep_id),
+            )
+        elif status == "completed":
+            await db.execute(
+                """UPDATE sweeps
+                   SET status = ?, completed_at = ?, results_json = ?
+                   WHERE id = ?""",
+                (status, now, results_json, sweep_id),
+            )
+        elif status == "failed":
+            await db.execute(
+                """UPDATE sweeps
+                   SET status = ?, completed_at = ?, error_message = ?
+                   WHERE id = ?""",
+                (status, now, error_message, sweep_id),
+            )
+        await db.commit()
+
+
+async def delete_sweep(sweep_id: int) -> bool:
+    """Delete a sweep row.
+
+    Args:
+        sweep_id: Primary key.
+
+    Returns:
+        ``True`` if a row was deleted, ``False`` otherwise.
     """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA foreign_keys=ON")
         cursor = await db.execute(
-            "DELETE FROM simulations WHERE id = ?", (simulation_id,),
+            "DELETE FROM sweeps WHERE id = ?", (sweep_id,),
         )
         await db.commit()
         return cursor.rowcount > 0

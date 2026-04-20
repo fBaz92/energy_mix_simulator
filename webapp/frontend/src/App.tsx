@@ -24,13 +24,26 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 import { ScenariosPage } from "@/pages/ScenariosPage";
 import { SimulationsPage } from "@/pages/SimulationsPage";
 import { SimulationDetailPage } from "@/pages/SimulationDetailPage";
+import { SweepsPage } from "@/pages/SweepsPage";
+import { WikiShell } from "@/components/layout/WikiShell";
+import { WikiHomePage } from "@/pages/WikiHomePage";
 
-// Code-split: Plotly ships with ResultsPage and ComparePage only.
+// Code-split: Plotly ships with ResultsPage, ComparePage, and
+// SweepDetailPage only.
 const ResultsPage = lazy(() =>
   import("@/pages/ResultsPage").then((m) => ({ default: m.ResultsPage }))
 );
 const ComparePage = lazy(() =>
   import("@/pages/ComparePage").then((m) => ({ default: m.ComparePage }))
+);
+const SweepDetailPage = lazy(() =>
+  import("@/pages/SweepDetailPage").then((m) => ({
+    default: m.SweepDetailPage,
+  }))
+);
+// Code-split: react-markdown + katex ship only with the wiki reader.
+const WikiPage = lazy(() =>
+  import("@/pages/WikiPage").then((m) => ({ default: m.WikiPage }))
 );
 
 const queryClient = new QueryClient({
@@ -93,6 +106,42 @@ function App() {
                 </ErrorBoundary>
               }
             />
+            <Route
+              path="/sweeps"
+              element={
+                <ErrorBoundary>
+                  <SweepsPage />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/sweeps/:id"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<PageSkeleton />}>
+                    <SweepDetailPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/wiki"
+              element={
+                <ErrorBoundary>
+                  <WikiShell />
+                </ErrorBoundary>
+              }
+            >
+              <Route index element={<WikiHomePage />} />
+              <Route
+                path=":slug"
+                element={
+                  <Suspense fallback={<PageSkeleton />}>
+                    <WikiPage />
+                  </Suspense>
+                }
+              />
+            </Route>
           </Route>
         </Routes>
       </BrowserRouter>

@@ -198,6 +198,22 @@ class MonteCarloResult:
         default_factory=lambda: np.zeros((0, 0, 0)))
     """Monthly average SOC, shape ``(n, n_storage, 12)``."""
 
+    # ── Price-setter (always populated) ───────────────────────────────
+    price_setter_hours_by_tech: dict[str, np.ndarray] = field(
+        default_factory=dict)
+    """Hours/year each unit set the marginal price, shape ``(n,)`` per
+    technology. Sentinel quarter-hours (unserved, price = 0) are excluded.
+    Virtual imports are collapsed to the ``'import'`` pseudo-technology."""
+    price_setter_pct_by_tech: dict[str, np.ndarray] = field(
+        default_factory=dict)
+    """Share of the year each technology set the marginal price, shape
+    ``(n,)`` per technology. Equal to ``hours / 8760``."""
+    price_setter_by_month_hour: dict[str, np.ndarray] = field(
+        default_factory=dict)
+    """Hours each technology set the marginal price broken down by
+    calendar month and hour-of-day, shape ``(n, 12, 24)`` per
+    technology."""
+
     def __getitem__(self, key: str):
         """Allow dict-style access for backward compatibility.
 
@@ -223,7 +239,8 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
                     price_areas_correlated: bool = True,
                     enable_ntc_faults: bool = True,
                     storage_cfg: dict[str, dict] | None = None,
-                    progress_callback=None) -> MonteCarloResult:
+                    progress_callback=None,
+                    dispatch_callback=None) -> MonteCarloResult:
     """Run a Monte Carlo simulation of the electricity market.
 
     For each run: builds fresh generators (new stochastic fuel price paths),
@@ -385,6 +402,13 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
     storage_avg_soc_rows: list[np.ndarray] = []
     storage_monthly_soc_rows: list[np.ndarray] = []
 
+    # Price-setter accumulators. Keys are technology labels; values are
+    # lists of per-run aggregates. Virtual imports are mapped to the
+    # ``'import'`` pseudo-technology so that all import links contribute
+    # to a single aggregate (rather than fragmenting by link name).
+    price_setter_hours_lists: dict[str, list[float]] = {}
+    price_setter_month_hour_lists: dict[str, list[np.ndarray]] = {}
+
     for run in range(n_runs):
         # RNG separation: derive three independent streams from a single
         # SeedSequence so that the stochastic sources (generators, foreign
@@ -413,6 +437,12 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
         su = build_storage_units(storage_cfg) if has_storage else None
 
         result = dispatch_year(gens, load, realizations, storage_units=su)
+
+        # Optional per-run dispatch sink. The webapp uses this to stream
+        # results into a Parquet time-series file without holding the
+        # entire list of :class:`DispatchResult` in memory at once.
+        if dispatch_callback is not None:
+            dispatch_callback(run, result)
 
         avg_prices.append(result.marginal_price.mean())
         total_curtailment.append(result.curtailment.sum())
@@ -444,6 +474,43 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
             if name not in emissions_by_tech_lists:
                 emissions_by_tech_lists[name] = []
             emissions_by_tech_lists[name].append(result.emissions[i].sum())
+
+        # Price-setter aggregation per run. For each unit that set the
+        # marginal price at any timestep, accumulate:
+        #   - total hours/year (count · 0.25h)
+        #   - breakdown by (month, hour-of-day), shape (12, 24)
+        # Virtual imports collapse to the ``'import'`` pseudo-tech so that
+        # individual link identity does not fragment the statistics.
+        ps_idx = result.price_setter_idx
+        gen_types_arr = result.gen_types or list(result.gen_names)
+        tech_labels: list[str] = []
+        for i, gt in enumerate(gen_types_arr):
+            if gt == 'import':
+                tech_labels.append('import')
+            else:
+                tech_labels.append(result.gen_names[i])
+        tech_set = set(tech_labels) | set(
+            price_setter_hours_lists.keys())
+        for tech in tech_set:
+            if tech not in price_setter_hours_lists:
+                # Backfill with zeros for previous runs.
+                price_setter_hours_lists[tech] = [0.0] * run
+                price_setter_month_hour_lists[tech] = [
+                    np.zeros((12, 24)) for _ in range(run)]
+        for tech in tech_set:
+            tech_indices = [i for i, t in enumerate(tech_labels) if t == tech]
+            if not tech_indices:
+                price_setter_hours_lists[tech].append(0.0)
+                price_setter_month_hour_lists[tech].append(np.zeros((12, 24)))
+                continue
+            mask = np.isin(ps_idx, tech_indices)
+            price_setter_hours_lists[tech].append(float(mask.sum()) * 0.25)
+            mh = np.zeros((12, 24))
+            if mask.any():
+                months_sel = tg.month[mask]
+                hours_sel = tg.hour[mask]
+                np.add.at(mh, (months_sel - 1, hours_sel), 0.25)
+            price_setter_month_hour_lists[tech].append(mh)
 
         # ── Per-link aggregates when interconnections are active ──
         if has_ic:
@@ -581,6 +648,18 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
 
     emissions_by_tech = {k: np.array(v) for k, v in emissions_by_tech_lists.items()}
 
+    # Price-setter finals: hours_by_tech, pct_by_tech (hours / 8760),
+    # by_month_hour (shape (n_runs, 12, 24) per tech). Zero-length runs
+    # lists are padded to n_runs in the per-run loop so no further
+    # alignment is needed here.
+    price_setter_hours_by_tech = {
+        k: np.array(v) for k, v in price_setter_hours_lists.items()}
+    price_setter_pct_by_tech = {
+        k: v / 8760.0 for k, v in price_setter_hours_by_tech.items()}
+    price_setter_by_month_hour = {
+        k: np.stack(v, axis=0)
+        for k, v in price_setter_month_hour_lists.items()}
+
     # Per-link aggregates: stack rows or return empty arrays for uniform shape
     def _stack_or_empty(rows):
         return (np.stack(rows, axis=0) if rows
@@ -637,6 +716,9 @@ def run_monte_carlo(mix_config: dict | SimulationConfig | None = None,
             np.stack(storage_monthly_soc_rows, axis=0)
             if storage_monthly_soc_rows
             else np.zeros((n_runs, n_storage, 12))),
+        price_setter_hours_by_tech=price_setter_hours_by_tech,
+        price_setter_pct_by_tech=price_setter_pct_by_tech,
+        price_setter_by_month_hour=price_setter_by_month_hour,
     )
 
 

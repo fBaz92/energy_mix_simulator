@@ -51,6 +51,7 @@ export const TECH_COLORS: Record<string, string> = {
   coal: "#44403c",
   hydro_mustrun: "#06b6d4",
   hydro: "#06b6d4",
+  import: "#10b981",
 };
 
 export function colorFor(tech: string): string {

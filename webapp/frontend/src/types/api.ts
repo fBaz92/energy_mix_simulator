@@ -141,6 +141,89 @@ export interface SimulationFullResult {
   storage_equivalent_cycles: number[][];
   storage_avg_soc: number[][];
   storage_monthly_avg_soc: number[][][];
+  // Price-setter tracking: for each quarter-hour we know which unit set the
+  // marginal price. These dicts aggregate that information across MC runs.
+  // The 'import' key collapses all virtual import links.
+  price_setter_hours_by_tech: Record<string, number[]>;
+  price_setter_pct_by_tech: Record<string, number[]>;
+  price_setter_by_month_hour: Record<string, number[][][]>;
+}
+
+/**
+ * Payload of ``GET /api/simulations/{id}/timeseries``.
+ *
+ * Served by the lazy-load endpoint that reads a single run from the
+ * Parquet file backing a simulation. Each requested series is an array
+ * of 35 040 floats (one per quarter-hour of the year) except
+ * ``price_setter_idx`` which is an integer index into the generator list.
+ */
+export interface TimeseriesResponse {
+  simulation_id: number;
+  run: number;
+  n_runs: number;
+  available: string[];
+  gen_names: string[];
+  gen_types: string[];
+  storage_names: string[];
+  interconnection_names: string[];
+  series: Record<string, number[]>;
+}
+
+// ---- Parameter sweeps (PART C) ------------------------------------------
+
+/** Request body for POST /api/sweeps. */
+export interface SweepCreate {
+  scenario_id: number;
+  name: string;
+  sweep_type: "1d" | "2d";
+  parameter_a: string;
+  values_a: number[];
+  parameter_b?: string | null;
+  values_b?: number[] | null;
+  n_runs_per_point: number;
+}
+
+/** Lightweight sweep row used by the list and poll endpoints. */
+export interface SweepOut {
+  id: number;
+  scenario_id: number;
+  scenario_name?: string | null;
+  name: string;
+  sweep_type: "1d" | "2d";
+  parameter_a: string;
+  values_a: number[];
+  parameter_b?: string | null;
+  values_b?: number[] | null;
+  n_runs_per_point: number;
+  status: "pending" | "running" | "completed" | "failed";
+  progress_current: number;
+  progress_total: number;
+  error_message?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+}
+
+/** Single grid-point aggregate metrics. */
+export interface SweepResultPoint {
+  a: number;
+  b?: number | null;
+  avg_price_mean: number;
+  avg_price_std: number;
+  carbon_intensity_mean: number;
+  avg_inertia_mean: number;
+  curtailment_mean: number;
+}
+
+/** Response body for GET /api/sweeps/{id}/results. */
+export interface SweepFullResult {
+  sweep_id: number;
+  sweep_type: "1d" | "2d";
+  parameter_a: string;
+  values_a: number[];
+  parameter_b?: string | null;
+  values_b?: number[] | null;
+  points: SweepResultPoint[];
 }
 
 export interface DefaultsResponse {

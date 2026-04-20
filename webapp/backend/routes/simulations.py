@@ -25,14 +25,22 @@ from webapp.backend.db import (
     get_scenario,
     get_simulation,
     get_simulation_result,
+    get_timeseries_path,
     list_simulations,
 )
 from webapp.backend.models import (
     SimulationFullResult,
     SimulationLaunch,
     SimulationSummary,
+    TimeseriesResponse,
 )
 from webapp.backend.tasks import get_progress, run_simulation_task
+from webapp.backend.timeseries_io import (
+    list_timeseries_columns,
+    read_timeseries_metadata,
+    read_timeseries_parquet,
+    timeseries_n_runs,
+)
 
 router = APIRouter(prefix="/api/simulations", tags=["simulations"])
 
@@ -204,9 +212,94 @@ async def get_results(simulation_id: int) -> SimulationFullResult:
     return SimulationFullResult(simulation_id=simulation_id, **result_dict)
 
 
+@router.get("/{simulation_id}/timeseries", response_model=TimeseriesResponse)
+async def get_timeseries(
+    simulation_id: int,
+    run: int = 0,
+    series: str = "",
+) -> TimeseriesResponse:
+    """Lazy-load quarter-hour time-series for one run of a simulation.
+
+    Reads from the Parquet file attached to the simulation (produced at
+    completion time by :mod:`webapp.backend.tasks`). Predicate pushdown
+    restricts decoding to the requested ``run``'s row group, keeping
+    the response under ~400 KB even when 10 series are requested.
+
+    Args:
+        simulation_id: Database primary key.
+        run: Zero-based MC run index. Defaults to 0 so the client can
+            omit the parameter when showing a single representative
+            trace (e.g. dispatch stack of run 0).
+        series: Comma-separated column names, e.g.
+            ``marginal_price,power_gas,price_setter_idx``. An empty
+            string returns no series, only the list of available
+            columns via ``available`` — useful for introspection before
+            rendering a chart.
+
+    Returns:
+        :class:`TimeseriesResponse` with ``n_runs`` (the number of runs
+        stored), ``available`` (the list of columns in the file), and
+        ``series`` (the requested subset as ``{name: list[float]}``).
+
+    Raises:
+        HTTPException 404: If the simulation or its time-series file
+            is missing.
+        HTTPException 409: If the simulation is not yet completed.
+        HTTPException 400: If ``run`` is outside the stored range.
+    """
+    row = await get_simulation(simulation_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    if row["status"] != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Simulation status is '{row['status']}', not completed")
+
+    ts_path = await get_timeseries_path(simulation_id)
+    if not ts_path:
+        raise HTTPException(
+            status_code=404,
+            detail="No time-series data available for this simulation")
+
+    available = list_timeseries_columns(ts_path)
+    n_runs = timeseries_n_runs(ts_path)
+    if run < 0 or run >= n_runs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"run={run} out of range [0, {n_runs})")
+
+    metadata = read_timeseries_metadata(ts_path)
+
+    requested = [s.strip() for s in series.split(",") if s.strip()]
+    series_data: dict[str, list[float]] = {}
+    if requested:
+        # Heavy I/O — run in the default thread pool to avoid stalling
+        # the event loop when many concurrent requests arrive.
+        loop = asyncio.get_event_loop()
+        series_data = await loop.run_in_executor(
+            None, read_timeseries_parquet, ts_path, run, requested)
+
+    return TimeseriesResponse(
+        simulation_id=simulation_id,
+        run=run,
+        n_runs=n_runs,
+        available=available,
+        gen_names=metadata["gen_names"],
+        gen_types=metadata["gen_types"],
+        storage_names=metadata["storage_names"],
+        interconnection_names=metadata["interconnection_names"],
+        series=series_data,
+    )
+
+
 @router.delete("/{simulation_id}", status_code=204)
 async def delete_simulation_by_id(simulation_id: int) -> None:
-    """Delete a simulation and its result data.
+    """Delete a simulation, its result data, and its Parquet time-series file.
+
+    The DB row is removed first; any on-disk Parquet payload is then
+    unlinked best-effort. A missing file is not an error — legacy
+    simulations completed before the PART B time-series storage rollout
+    will not have one.
 
     Args:
         simulation_id: Database primary key.
@@ -214,6 +307,15 @@ async def delete_simulation_by_id(simulation_id: int) -> None:
     Raises:
         HTTPException 404: If simulation not found.
     """
-    deleted = await delete_simulation(simulation_id)
-    if not deleted:
+    from pathlib import Path
+
+    ts_path = await delete_simulation(simulation_id)
+    if ts_path is False:
         raise HTTPException(status_code=404, detail="Simulation not found")
+    if isinstance(ts_path, str) and ts_path:
+        try:
+            Path(ts_path).unlink(missing_ok=True)
+        except OSError:
+            # Deletion of the DB row is the source of truth; a stray
+            # Parquet file is harmless. Swallow filesystem errors here.
+            pass
