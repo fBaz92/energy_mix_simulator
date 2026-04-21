@@ -45,6 +45,13 @@ const SweepDetailPage = lazy(() =>
 const WikiPage = lazy(() =>
   import("@/pages/WikiPage").then((m) => ({ default: m.WikiPage }))
 );
+// Code-split: Data Analysis ships with Plotly charts (lifecycle, deaths,
+// accidents, PM2.5, land use, nuclear waste).
+const DataAnalysisPage = lazy(() =>
+  import("@/pages/DataAnalysisPage").then((m) => ({
+    default: m.DataAnalysisPage,
+  }))
+);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -120,6 +127,16 @@ function App() {
                 <ErrorBoundary>
                   <Suspense fallback={<PageSkeleton />}>
                     <SweepDetailPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/data-analysis"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<PageSkeleton />}>
+                    <DataAnalysisPage />
                   </Suspense>
                 </ErrorBoundary>
               }

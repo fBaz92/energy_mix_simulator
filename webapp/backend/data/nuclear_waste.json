@@ -1,0 +1,125 @@
+{
+  "headline": {
+    "spent_fuel_per_mwh_electrical_g": 3.3,
+    "hlw_per_mwh_after_reprocessing_g": 0.3,
+    "llw_and_ilw_per_mwh_g": 80,
+    "coal_ash_per_mwh_kg": 90,
+    "coal_ash_comparison_note": "A typical coal plant produces ~90 kg of fly + bottom ash per MWh electrical. A typical LWR produces ~3 g of spent fuel per MWh. Coal ash contains uranium and thorium at concentrations a few times higher than average crustal rock, and the absolute radioactive release to the biosphere from coal-plant fly ash worldwide exceeds that from the routine operation of all civil nuclear plants combined (McBride et al., Science 1978)."
+  },
+  "categories": [
+    {
+      "category": "VLLW",
+      "full_name": "Very Low Level Waste",
+      "share_of_waste_volume_pct": 60,
+      "share_of_waste_radioactivity_pct": 0.001,
+      "typical_contents": "Contaminated soil, construction rubble from decommissioning, lightly-activated metal.",
+      "disposal": "Surface landfills with modest engineered barriers (e.g. CIRES in France, low-level trenches in the US).",
+      "hazard_lifetime_years": 30
+    },
+    {
+      "category": "LLW",
+      "full_name": "Low Level Waste",
+      "share_of_waste_volume_pct": 30,
+      "share_of_waste_radioactivity_pct": 0.01,
+      "typical_contents": "Protective clothing, lab equipment, ion-exchange resins, filters from normal operations.",
+      "disposal": "Shallow engineered facilities (10-30 m depth) with concrete barriers. Examples: LLW Repository (UK), El Cabril (Spain), Barnwell (US, now closed).",
+      "hazard_lifetime_years": 300
+    },
+    {
+      "category": "ILW",
+      "full_name": "Intermediate Level Waste",
+      "share_of_waste_volume_pct": 7,
+      "share_of_waste_radioactivity_pct": 4,
+      "typical_contents": "Reactor internals (activated steel), spent fuel cladding hulls and end-fittings, sludges from fuel-pond operations.",
+      "disposal": "Intermediate-depth geological facilities (100-200 m). Currently interim storage in most countries; a handful of deep ILW repositories operate (e.g. WIPP in the US for transuranic waste).",
+      "hazard_lifetime_years": 10000
+    },
+    {
+      "category": "HLW",
+      "full_name": "High Level Waste",
+      "share_of_waste_volume_pct": 3,
+      "share_of_waste_radioactivity_pct": 95,
+      "typical_contents": "Spent nuclear fuel (direct disposal) or vitrified reprocessing residues. The uranium-plutonium-fission-product mixture.",
+      "disposal": "Deep geological repositories (400-1000 m) in stable rock formations. As of 2026, only Finland's Onkalo is licensed for operational emplacement; Sweden's Forsmark is under construction.",
+      "hazard_lifetime_years": 250000
+    }
+  ],
+  "global_stockpile_2023": {
+    "spent_fuel_in_storage_tonnes_hm": 400000,
+    "spent_fuel_in_dry_cask_tonnes_hm": 120000,
+    "spent_fuel_in_pool_tonnes_hm": 260000,
+    "annual_production_tonnes_hm_per_year": 12000,
+    "notes": "Cumulative since the start of commercial nuclear in the 1950s. All of it fits in a volume roughly equal to a football pitch stacked 10 m high: ~56,000 m3 of solid heavy-metal-equivalent, though the dry-cask storage footprint is several times larger due to shielding and spacing."
+  },
+  "size_comparison": {
+    "description": "All high-level waste ever produced by commercial nuclear power could fit on a single American football field stacked about 10 meters high. For comparison, the world burns about 8 billion tonnes of coal per year, producing ~800 million tonnes of fly ash — enough to fill roughly 1000 Empire State Buildings annually.",
+    "hlw_volume_m3_cumulative_worldwide": 400000,
+    "coal_ash_volume_m3_annual_worldwide": 800000000,
+    "ratio": "coal ash annual / HLW cumulative = 2000x"
+  },
+  "deep_geological_repositories": [
+    {
+      "name": "Onkalo (Olkiluoto)",
+      "country": "Finland",
+      "status": "Operating (first emplacement 2024-2025)",
+      "host_rock": "Crystalline granitic gneiss",
+      "depth_m": 440,
+      "planned_capacity_tonnes_hm": 6500,
+      "operator": "Posiva",
+      "notes": "First operational deep geological HLW repository in the world. Uses copper-canister KBS-3 design.",
+      "reference": "https://www.posiva.fi/en"
+    },
+    {
+      "name": "Forsmark",
+      "country": "Sweden",
+      "status": "Construction licensed 2022, operation target 2035",
+      "host_rock": "Crystalline granitic gneiss",
+      "depth_m": 500,
+      "planned_capacity_tonnes_hm": 12000,
+      "operator": "SKB",
+      "reference": "https://www.skb.com/"
+    },
+    {
+      "name": "Cigeo (Bure)",
+      "country": "France",
+      "status": "Construction licence granted 2022, operation target 2035-2040",
+      "host_rock": "Callovo-Oxfordian clay",
+      "depth_m": 500,
+      "planned_capacity_tonnes_hm": "reprocessing residues equivalent",
+      "operator": "Andra",
+      "notes": "Clay host rock (low permeability) rather than crystalline rock.",
+      "reference": "https://international.andra.fr/"
+    },
+    {
+      "name": "WIPP",
+      "country": "USA",
+      "status": "Operating since 1999 (transuranic defence waste only, not HLW)",
+      "host_rock": "Bedded salt",
+      "depth_m": 655,
+      "planned_capacity_tonnes_hm": "TRU waste; not for commercial HLW",
+      "operator": "US DOE",
+      "notes": "Only operating deep geological repository in the US, but for Cold-War-legacy weapons waste, not commercial spent fuel. Commercial US HLW remains in interim storage awaiting a permanent site after the Yucca Mountain project was defunded in 2011."
+    },
+    {
+      "name": "KBS-3 (concept)",
+      "country": "Concept used by Finland and Sweden",
+      "status": "Reference design",
+      "host_rock": "Crystalline bedrock",
+      "depth_m": 400,
+      "planned_capacity_tonnes_hm": null,
+      "operator": "SKB (concept owner)",
+      "notes": "Multi-barrier system: spent fuel in copper canister, embedded in bentonite clay, emplaced in granite 400-500 m deep. Engineered barriers designed to contain radionuclides for >100,000 years."
+    }
+  ],
+  "reprocessing_status": {
+    "description": "Reprocessing separates uranium and plutonium from spent fuel to reuse as MOX fuel. Reduces HLW volume by ~75%% and radioactivity by ~90%% over 1000 years, but generates additional ILW streams and creates a weapons-proliferation concern.",
+    "countries_operating": ["France (La Hague)", "Russia (Mayak)", "UK (Sellafield, closed 2022)", "Japan (Rokkasho, commissioning delayed to 2026+)"],
+    "countries_with_once-through_only": ["USA", "Canada", "Sweden", "Finland", "Spain"],
+    "proliferation_concern": "The 1977 US decision to halt reprocessing for civil use was driven by non-proliferation policy, not economics."
+  },
+  "references": [
+    "https://world-nuclear.org/information-library/nuclear-fuel-cycle/nuclear-wastes/radioactive-waste-management.aspx",
+    "https://www.iaea.org/topics/radioactive-waste-management",
+    "https://www.oecd-nea.org/jcms/pl_14806/management-of-radioactive-waste"
+  ]
+}

@@ -590,3 +590,79 @@ class SweepFullResult(BaseModel):
     parameter_b: str | None = None
     values_b: list[float] | None = None
     points: list[SweepResultPoint]
+
+
+# ---------------------------------------------------------------------------
+# Data Analysis (external datasets + curated JSON)
+# ---------------------------------------------------------------------------
+
+class DatasetMeta(BaseModel):
+    """Provenance metadata attached to every dataset response.
+
+    Rendered by the frontend as an attribution footer under each chart
+    so the user can see the source, licence, and freshness without
+    drilling into a separate page.
+
+    Attributes:
+        slug: Stable identifier (same as the URL path segment).
+        title: Human-readable label.
+        source_url: Canonical upstream URL (empty string for curated
+            static datasets).
+        license: Short licence tag, e.g. ``"CC-BY 4.0"``.
+        attribution: Free-form citation string.
+        fetched_at: ISO UTC of the last successful upstream fetch, or
+            of the process start time for static datasets.
+        is_stale: ``True`` when the served data is a cached fallback
+            because the most recent refresh failed. The UI should show
+            a warning badge.
+        notes: Caveat prose. Plain text, no markdown.
+        kind: ``"remote"`` for OWID-fetched datasets, ``"static"`` for
+            curated JSON files in the repo.
+    """
+
+    slug: str
+    title: str
+    source_url: str
+    license: str
+    attribution: str
+    fetched_at: str
+    is_stale: bool = False
+    notes: str = ""
+    kind: str  # 'remote' | 'static'
+
+
+class DatasetIndexEntry(BaseModel):
+    """One row in the catalog served by ``GET /api/datasets``.
+
+    Attributes:
+        slug: Stable identifier.
+        title: Human-readable label.
+        kind: ``"remote"`` or ``"static"``.
+        source_url: Upstream URL (empty for static).
+        fetched_at: ISO UTC or ``None`` if never fetched yet.
+        is_stale: Whether the most recent refresh failed.
+    """
+
+    slug: str
+    title: str
+    kind: str
+    source_url: str
+    fetched_at: str | None = None
+    is_stale: bool = False
+
+
+class DatasetResponse(BaseModel):
+    """Envelope for a single dataset payload.
+
+    Attributes:
+        meta: Provenance and freshness info.
+        rows: List of parsed row dicts. Shape is dataset-specific; the
+            frontend consumes it via typed accessors.
+        payload: Used for static datasets whose schema does not fit a
+            flat row list (e.g. the nuclear waste scheda). Exactly one
+            of ``rows`` / ``payload`` is populated per response.
+    """
+
+    meta: DatasetMeta
+    rows: list[dict] | None = None
+    payload: dict | None = None

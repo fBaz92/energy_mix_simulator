@@ -5,6 +5,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import {
   BookOpen,
+  Database,
   FlaskConical,
   GitCompare,
   LayoutDashboard,
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { to: "/simulations", label: "Simulations", icon: LayoutDashboard },
   { to: "/sweeps", label: "Sweeps", icon: TrendingUp },
   { to: "/compare", label: "Compare", icon: GitCompare },
+  { to: "/data-analysis", label: "Data Analysis", icon: Database },
   { to: "/wiki", label: "Wiki", icon: BookOpen },
 ] as const;
 

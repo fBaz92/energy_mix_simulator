@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS sweeps (
     completed_at TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS external_datasets (
+    slug TEXT PRIMARY KEY,              -- DatasetSpec.slug
+    source_url TEXT NOT NULL,
+    raw_csv BLOB NOT NULL,              -- gzipped upstream bytes
+    parsed_json TEXT NOT NULL,          -- shape served to frontend
+    etag TEXT,                          -- upstream ETag for conditional GET
+    fetched_at TEXT NOT NULL,           -- ISO UTC of last successful fetch
+    refresh_ttl_hours INTEGER NOT NULL DEFAULT 168,
+    is_stale INTEGER NOT NULL DEFAULT 0,  -- set when refresh failed
+    last_error TEXT
+);
 """
 
 
@@ -632,3 +644,114 @@ async def delete_sweep(sweep_id: int) -> bool:
         )
         await db.commit()
         return cursor.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# External dataset cache helpers
+# ---------------------------------------------------------------------------
+
+
+async def get_external_dataset(slug: str) -> dict[str, Any] | None:
+    """Fetch a cached external dataset row by slug.
+
+    Args:
+        slug: :class:`DatasetSpec.slug`.
+
+    Returns:
+        Dict with all ``external_datasets`` columns, or ``None`` if the
+        slug has never been fetched. ``raw_csv`` is returned as
+        ``bytes`` (SQLite ``BLOB``).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        row = await (await db.execute(
+            "SELECT * FROM external_datasets WHERE slug = ?", (slug,)
+        )).fetchone()
+        return dict(row) if row else None
+
+
+async def upsert_external_dataset(
+    slug: str,
+    source_url: str,
+    raw_csv: bytes,
+    parsed_json: str,
+    etag: str | None,
+    refresh_ttl_hours: int,
+) -> None:
+    """Insert or replace the cache row for ``slug``.
+
+    Called after a successful upstream fetch. Resets ``is_stale`` to 0
+    and clears any previous ``last_error``.
+
+    Args:
+        slug: Dataset identifier.
+        source_url: Canonical CSV URL.
+        raw_csv: Gzipped upstream bytes (caller is expected to gzip
+            before storing; the column is BLOB, no further encoding is
+            applied here).
+        parsed_json: Already-serialised frontend payload.
+        etag: Upstream ETag, enables future conditional GET. May be
+            ``None`` if the server omits the header.
+        refresh_ttl_hours: Cache lifetime.
+    """
+    now = _now_iso()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO external_datasets (
+                slug, source_url, raw_csv, parsed_json,
+                etag, fetched_at, refresh_ttl_hours,
+                is_stale, last_error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)
+               ON CONFLICT(slug) DO UPDATE SET
+                 source_url = excluded.source_url,
+                 raw_csv = excluded.raw_csv,
+                 parsed_json = excluded.parsed_json,
+                 etag = excluded.etag,
+                 fetched_at = excluded.fetched_at,
+                 refresh_ttl_hours = excluded.refresh_ttl_hours,
+                 is_stale = 0,
+                 last_error = NULL
+            """,
+            (slug, source_url, raw_csv, parsed_json,
+             etag, now, refresh_ttl_hours),
+        )
+        await db.commit()
+
+
+async def mark_external_dataset_stale(slug: str, error: str) -> None:
+    """Flag an existing cache row as stale after a refresh failure.
+
+    Does nothing if no row exists (there is nothing to serve).
+
+    Args:
+        slug: Dataset identifier.
+        error: Short error summary (stored verbatim in ``last_error``).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE external_datasets
+               SET is_stale = 1, last_error = ?
+               WHERE slug = ?""",
+            (error, slug),
+        )
+        await db.commit()
+
+
+async def list_external_datasets() -> list[dict[str, Any]]:
+    """List all cached dataset rows (without the heavy ``raw_csv`` blob).
+
+    Returns:
+        List of dicts with columns suitable for the catalog endpoint:
+        ``slug``, ``source_url``, ``fetched_at``, ``refresh_ttl_hours``,
+        ``is_stale``, ``last_error``. Parsed JSON and raw CSV are
+        omitted for payload size.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await (await db.execute(
+            """SELECT slug, source_url, etag, fetched_at,
+                      refresh_ttl_hours, is_stale, last_error
+               FROM external_datasets
+               ORDER BY slug"""
+        )).fetchall()
+        return [dict(r) for r in rows]

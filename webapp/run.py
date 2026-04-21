@@ -40,13 +40,23 @@ def main() -> None:
         "--port", "8000",
         "--reload",
     ]
-    frontend_cmd = ["npm", "run", "dev"]
+    # On Windows, ``npm`` is actually ``npm.cmd`` — plain
+    # subprocess.Popen cannot locate it without the shell doing PATHEXT
+    # resolution. Use ``shell=True`` on Windows; POSIX keeps the list
+    # form, which avoids shell-quoting pitfalls.
+    is_windows = os.name == "nt"
+    npm_cmd = "npm.cmd" if is_windows else "npm"
+    frontend_cmd: list[str] | str = (
+        f"{npm_cmd} run dev" if is_windows else ["npm", "run", "dev"]
+    )
 
     print(">>> Starting FastAPI backend on http://127.0.0.1:8000")
     backend = subprocess.Popen(backend_cmd, cwd=ROOT.parent)
 
     print(">>> Starting Vite frontend on http://127.0.0.1:5173")
-    frontend = subprocess.Popen(frontend_cmd, cwd=FRONTEND)
+    frontend = subprocess.Popen(
+        frontend_cmd, cwd=FRONTEND, shell=is_windows,
+    )
 
     print()
     print("Open http://localhost:5173 in your browser.")

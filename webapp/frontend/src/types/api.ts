@@ -236,3 +236,177 @@ export interface DefaultsResponse {
   price_area_correlations: Array<Array<string | number>>;
   storage_units: Record<string, StorageParams>;
 }
+
+// ---------------------------------------------------------------------------
+// Data Analysis section — external (OWID) + curated static datasets
+// ---------------------------------------------------------------------------
+
+/** Metadata attached to every dataset response (provenance, freshness). */
+export interface DatasetMeta {
+  slug: string;
+  title: string;
+  source_url: string;
+  license: string;
+  attribution: string;
+  fetched_at: string;
+  is_stale: boolean;
+  notes: string;
+  kind: "remote" | "static";
+}
+
+/** One entry in the catalog served by GET /api/datasets. */
+export interface DatasetIndexEntry {
+  slug: string;
+  title: string;
+  kind: "remote" | "static";
+  source_url: string;
+  fetched_at: string | null;
+  is_stale: boolean;
+}
+
+/** Envelope for a single dataset payload. Exactly one of rows/payload is set. */
+export interface DatasetResponse {
+  meta: DatasetMeta;
+  rows: Record<string, unknown>[] | null;
+  payload: Record<string, unknown> | null;
+}
+
+// Row shapes for each dataset — narrow types parsed out of the generic envelope.
+
+export interface DeathsPerTwhRow {
+  source: string;
+  year: number;
+  deaths_per_twh: number;
+}
+
+export interface CarbonIntensityCountryRow {
+  country: string;
+  code: string | null;
+  year: number;
+  gco2_kwh: number;
+  is_aggregate: boolean;
+}
+
+export interface Pm25DeathsRow {
+  country: string;
+  code: string | null;
+  year: number;
+  deaths: number;
+  is_aggregate: boolean;
+}
+
+export interface LifecycleCarbonRow {
+  source: string;
+  median_gco2eq_kwh: number;
+  p5_gco2eq_kwh: number;
+  p95_gco2eq_kwh: number;
+  notes: string;
+  reference: string;
+}
+
+export interface LandUseRow {
+  source: string;
+  median_m2_per_mwh: number;
+  p5_m2_per_mwh: number;
+  p95_m2_per_mwh: number;
+  notes?: string;
+  reference?: string;
+}
+
+export interface AccidentRow {
+  id: string;
+  name: string;
+  year: number;
+  country: string;
+  source_type: string;
+  direct_deaths: number;
+  estimated_deaths_low: number;
+  estimated_deaths_high: number;
+  short_description: string;
+  references: string[];
+  /** Only present for Banqiao — famine + disease deaths from the broader flood. */
+  famine_disease_deaths_estimate?: number;
+}
+
+// Fossil pollution deaths JSON has nested sections, not a flat row list.
+export interface FossilPollutionPayload {
+  headline: {
+    global_annual_deaths_from_fossil_pm25: {
+      vohra_2021_central: number;
+      lelieveld_2019_central: number;
+      burnett_2018_central: number;
+    };
+    commentary: string;
+  };
+  by_source: Array<{
+    source: string;
+    annual_global_deaths_vohra_2021: number;
+    share_of_fossil_total_pct: number;
+    notes: string;
+    reference: string;
+  }>;
+  by_region: Array<{
+    region: string;
+    annual_deaths: number;
+    note: string;
+  }>;
+  historical_famous_events: Array<{
+    event: string;
+    year: number;
+    direct_deaths: number;
+    latent_deaths_estimate: number | null;
+    notes: string;
+    reference: string;
+  }>;
+}
+
+// Nuclear waste JSON has top-level sections, also not a flat list.
+export interface NuclearWastePayload {
+  headline: {
+    spent_fuel_per_mwh_electrical_g: number;
+    hlw_per_mwh_after_reprocessing_g: number;
+    llw_and_ilw_per_mwh_g: number;
+    coal_ash_per_mwh_kg: number;
+    coal_ash_comparison_note: string;
+  };
+  categories: Array<{
+    category: string;
+    full_name: string;
+    share_of_waste_volume_pct: number;
+    share_of_waste_radioactivity_pct: number;
+    typical_contents: string;
+    disposal: string;
+    hazard_lifetime_years: number;
+  }>;
+  global_stockpile_2023: {
+    spent_fuel_in_storage_tonnes_hm: number;
+    spent_fuel_in_dry_cask_tonnes_hm: number;
+    spent_fuel_in_pool_tonnes_hm: number;
+    annual_production_tonnes_hm_per_year: number;
+    notes: string;
+  };
+  size_comparison: {
+    description: string;
+    hlw_volume_m3_cumulative_worldwide: number;
+    coal_ash_volume_m3_annual_worldwide: number;
+    ratio: string;
+  };
+  deep_geological_repositories: Array<{
+    name: string;
+    country: string;
+    status: string;
+    host_rock: string;
+    depth_m: number;
+    planned_capacity_tonnes_hm: number | string | null;
+    operator: string;
+    notes?: string;
+    reference?: string;
+  }>;
+  reprocessing_status: {
+    description: string;
+    countries_operating: string[];
+    "countries_with_once-through_only": string[];
+    proliferation_concern: string;
+  };
+  references: string[];
+}

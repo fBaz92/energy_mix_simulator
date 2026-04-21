@@ -1,0 +1,66 @@
+[
+  {
+    "source": "Coal",
+    "median_m2_per_mwh": 0.30,
+    "p5_m2_per_mwh": 0.12,
+    "p95_m2_per_mwh": 0.74,
+    "notes": "Includes strip mine reclamation area averaged over plant lifetime. Underground mining gives lower direct footprint but higher subsidence area.",
+    "reference": "van Zalk & Behrens, Energy Policy 2018"
+  },
+  {
+    "source": "Gas",
+    "median_m2_per_mwh": 0.48,
+    "p5_m2_per_mwh": 0.13,
+    "p95_m2_per_mwh": 2.80,
+    "notes": "Conventional gas fields have very small footprint per MWh; unconventional (shale) well pads + access roads + pipelines push the p95 up substantially.",
+    "reference": "van Zalk & Behrens, Energy Policy 2018"
+  },
+  {
+    "source": "Nuclear",
+    "median_m2_per_mwh": 0.10,
+    "p5_m2_per_mwh": 0.05,
+    "p95_m2_per_mwh": 0.31,
+    "notes": "Includes reactor site, cooling infrastructure, and uranium mining footprint averaged over lifetime. Excludes geological repository area (negligible on a per-MWh basis).",
+    "reference": "van Zalk & Behrens, Energy Policy 2018"
+  },
+  {
+    "source": "Solar",
+    "median_m2_per_mwh": 19.0,
+    "p5_m2_per_mwh": 11.0,
+    "p95_m2_per_mwh": 40.0,
+    "notes": "Utility-scale ground-mount PV, project area (fenceline). Actual panel coverage is ~30-50%% of project area; the rest is inter-row spacing and setbacks. Rooftop PV has effectively zero land use.",
+    "reference": "van Zalk & Behrens, Energy Policy 2018"
+  },
+  {
+    "source": "Wind",
+    "median_m2_per_mwh": 100.0,
+    "p5_m2_per_mwh": 40.0,
+    "p95_m2_per_mwh": 300.0,
+    "notes": "Project boundary (lease area). Direct footprint (turbine pads, access roads, substation) is only 1-3%% of project area — the rest remains in agricultural or grazing use.",
+    "reference": "van Zalk & Behrens, Energy Policy 2018"
+  },
+  {
+    "source": "Hydro",
+    "median_m2_per_mwh": 14.0,
+    "p5_m2_per_mwh": 2.0,
+    "p95_m2_per_mwh": 210.0,
+    "notes": "Reservoir surface area normalised per MWh. Run-of-river: near zero. Large storage reservoirs (e.g. Churchill Falls, Itaipu): moderate. Shallow tropical reservoirs (Tucurui): very high.",
+    "reference": "van Zalk & Behrens, Energy Policy 2018"
+  },
+  {
+    "source": "Biomass",
+    "median_m2_per_mwh": 580.0,
+    "p5_m2_per_mwh": 260.0,
+    "p95_m2_per_mwh": 1100.0,
+    "notes": "Dedicated energy crops (switchgrass, miscanthus). The largest footprint of any energy source by a wide margin — a single 500 MW biomass plant needs ~1,500 km2 of cropland.",
+    "reference": "van Zalk & Behrens, Energy Policy 2018"
+  },
+  {
+    "source": "Geothermal",
+    "median_m2_per_mwh": 0.50,
+    "p5_m2_per_mwh": 0.10,
+    "p95_m2_per_mwh": 2.00,
+    "notes": "Resource-dependent. Flash plants in volcanic fields (Geysers, Larderello) are compact; EGS plants with multiple wells spread out more.",
+    "reference": "van Zalk & Behrens, Energy Policy 2018"
+  }
+]

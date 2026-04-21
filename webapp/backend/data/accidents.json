@@ -1,0 +1,361 @@
+[
+  {
+    "id": "banqiao-1975",
+    "name": "Banqiao and Shimantan dam failures",
+    "year": 1975,
+    "country": "China",
+    "source_type": "Hydro",
+    "direct_deaths": 26000,
+    "estimated_deaths_low": 85000,
+    "estimated_deaths_high": 240000,
+    "famine_disease_deaths_estimate": 145000,
+    "short_description": "Typhoon Nina produced a 1-in-2000-year rainfall event over the Huai River basin. Banqiao and Shimantan reservoirs overtopped and failed within hours, triggering a cascade of 62 smaller dam collapses. A 10 km wide flood wave swept 5.5 million people from their homes. The central estimate of ~171,000 total deaths (direct + disease + famine) makes it the deadliest non-conflict energy accident in history by an order of magnitude.",
+    "references": [
+      "https://en.wikipedia.org/wiki/1975_Banqiao_Dam_failure",
+      "Si Yuan & Qian Gang, 'The Great Failure of Huaihe River' (2008)"
+    ]
+  },
+  {
+    "id": "vajont-1963",
+    "name": "Vajont Dam overtopping",
+    "year": 1963,
+    "country": "Italy",
+    "source_type": "Hydro",
+    "direct_deaths": 1917,
+    "estimated_deaths_low": 1917,
+    "estimated_deaths_high": 2500,
+    "short_description": "A 260-million-m3 landslide from Mount Toc dropped into the Vajont reservoir at 110 km/h, generating a 250 m high wave that overtopped the dam (which survived intact) and destroyed the towns of Longarone, Pirago, Villanova, Rivalta and Fae within minutes. The geological instability was known to the operator but dismissed. Still taught in engineering schools as the paradigmatic reservoir-landslide disaster.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Vajont_Dam",
+      "Italian parliamentary inquiry report (1964)"
+    ]
+  },
+  {
+    "id": "machchhu-1979",
+    "name": "Machchhu-2 dam failure",
+    "year": 1979,
+    "country": "India",
+    "source_type": "Hydro",
+    "direct_deaths": 1800,
+    "estimated_deaths_low": 1800,
+    "estimated_deaths_high": 25000,
+    "short_description": "Earthen dam 5 km upstream of Morbi (Gujarat) failed during heavy monsoon rains. A 12 m wave reached Morbi city in 20 minutes. Official toll was 1,800 but Guinness World Records lists 25,000 — the true figure is likely between 5,000 and 15,000. The disaster is the inspiration for Tom Wright's 'No One Had a Tongue to Speak'.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Machchhu_dam_failure",
+      "Wright & Joshi, 'No One Had a Tongue to Speak' (2014)"
+    ]
+  },
+  {
+    "id": "south-fork-1889",
+    "name": "South Fork Dam / Johnstown flood",
+    "year": 1889,
+    "country": "USA",
+    "source_type": "Hydro",
+    "direct_deaths": 2209,
+    "estimated_deaths_low": 2209,
+    "estimated_deaths_high": 2209,
+    "short_description": "Earthen dam owned by a recreational fishing club above Johnstown, Pennsylvania. Poor maintenance (spillways blocked by fish screens, dam lowered to widen the road on top) led to overtopping during a heavy storm. 14 million tonnes of water swept 23 km downstream into Johnstown, killing 1 in 9 residents. First major disaster in American Red Cross history.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Johnstown_Flood",
+      "McCullough, 'The Johnstown Flood' (1968)"
+    ]
+  },
+  {
+    "id": "malpasset-1959",
+    "name": "Malpasset Dam collapse",
+    "year": 1959,
+    "country": "France",
+    "source_type": "Hydro",
+    "direct_deaths": 423,
+    "estimated_deaths_low": 421,
+    "estimated_deaths_high": 423,
+    "short_description": "Thin concrete arch dam near Frejus failed catastrophically after heavy rains. Post-failure investigation found the schist foundation slipped along a previously-unmapped fault. Led to mandatory geological review as a condition for French dam construction — and indirectly to more conservative arch-dam designs worldwide.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Malpasset_Dam"
+    ]
+  },
+  {
+    "id": "teton-1976",
+    "name": "Teton Dam failure",
+    "year": 1976,
+    "country": "USA",
+    "source_type": "Hydro",
+    "direct_deaths": 11,
+    "estimated_deaths_low": 11,
+    "estimated_deaths_high": 14,
+    "short_description": "Earthfill dam in Idaho failed during first filling due to internal erosion ('piping') through fractured rhyolite foundation. Low fatalities thanks to early morning evacuation of downstream communities. Total damages ~$2 billion (1976 dollars). The US Bureau of Reclamation has not built a major dam since.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Teton_Dam",
+      "US Interior Department Independent Panel Report (1976)"
+    ]
+  },
+  {
+    "id": "vega-de-tera-1959",
+    "name": "Vega de Tera Dam collapse",
+    "year": 1959,
+    "country": "Spain",
+    "source_type": "Hydro",
+    "direct_deaths": 144,
+    "estimated_deaths_low": 144,
+    "estimated_deaths_high": 150,
+    "short_description": "Concrete-block gravity dam in Zamora province failed at 00:15, destroying the village of Ribadelago while most residents slept. The inquiry identified poor-quality 1950s concrete and inadequate bonding between blocks. Franco-era press censorship initially suppressed the story.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Vega_de_Tera_Dam_disaster"
+    ]
+  },
+  {
+    "id": "situ-gintung-2009",
+    "name": "Situ Gintung colonial-era dam breach",
+    "year": 2009,
+    "country": "Indonesia",
+    "source_type": "Hydro",
+    "direct_deaths": 98,
+    "estimated_deaths_low": 98,
+    "estimated_deaths_high": 100,
+    "short_description": "Dutch-built 1933 dam in a Jakarta suburb overtopped after heavy rains. The wave hit a densely-populated downstream neighbourhood at 04:00. Authorities had known the dam was in poor condition for over a decade.",
+    "references": [
+      "https://en.wikipedia.org/wiki/2009_Situ_Gintung_dam_disaster"
+    ]
+  },
+  {
+    "id": "sayano-shushenskaya-2009",
+    "name": "Sayano-Shushenskaya turbine hall flood",
+    "year": 2009,
+    "country": "Russia",
+    "source_type": "Hydro",
+    "direct_deaths": 75,
+    "estimated_deaths_low": 75,
+    "estimated_deaths_high": 75,
+    "short_description": "Turbine 2 of Russia's largest hydro plant disintegrated due to metal fatigue in the guide vane bolts, flooding the turbine hall. Not a dam failure per se, but still the deadliest hydropower-operations accident in modern history. 9 out of 10 turbines damaged; plant restored over 5 years at a cost of $1.3 billion.",
+    "references": [
+      "https://en.wikipedia.org/wiki/2009_Sayano-Shushenskaya_hydroelectric_power_station_accident"
+    ]
+  },
+  {
+    "id": "gleno-1923",
+    "name": "Gleno Dam collapse",
+    "year": 1923,
+    "country": "Italy",
+    "source_type": "Hydro",
+    "direct_deaths": 356,
+    "estimated_deaths_low": 356,
+    "estimated_deaths_high": 500,
+    "short_description": "Multi-arch concrete dam in the Val di Scalve failed 40 days after first filling due to shoddy construction (cement watered down by the contractor, inadequate reinforcement). The flood swept through Bueggio and Dezzo, killing nearly half the population of the valley. The contractor's family was eventually convicted of manslaughter.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Gleno_Dam"
+    ]
+  },
+  {
+    "id": "chernobyl-1986",
+    "name": "Chernobyl Unit 4 steam explosion",
+    "year": 1986,
+    "country": "Soviet Union (Ukraine)",
+    "source_type": "Nuclear",
+    "direct_deaths": 30,
+    "estimated_deaths_low": 4000,
+    "estimated_deaths_high": 60000,
+    "short_description": "A xenon-poisoned reactor at ultra-low power was subjected to a botched safety test; graphite-tipped control rods inserted into a supercritical core triggered a steam explosion followed by a graphite fire that burned for 10 days. 30 immediate deaths (firefighters + operators) from acute radiation. Estimates of latent-cancer deaths range from ~4,000 (WHO/IAEA Chernobyl Forum, Ukraine/Belarus/Russia only) to 27,000-60,000 (TORCH report, whole of Europe) over 70 years. 350,000 evacuated.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Chernobyl_disaster",
+      "WHO Chernobyl Forum (2005); TORCH report (2006)"
+    ]
+  },
+  {
+    "id": "fukushima-2011",
+    "name": "Fukushima Daiichi meltdowns",
+    "year": 2011,
+    "country": "Japan",
+    "source_type": "Nuclear",
+    "direct_deaths": 1,
+    "estimated_deaths_low": 100,
+    "estimated_deaths_high": 1600,
+    "short_description": "Tohoku earthquake and ensuing 14 m tsunami overwhelmed the 5.7 m seawall and knocked out all AC power including emergency diesels. Three reactor cores melted over three days; hydrogen explosions breached containment of Units 1 and 3. One direct death attributed to acute radiation (2018); ~1,600 excess deaths attributable to the forced evacuation itself. No identifiable cancer cluster to date.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Fukushima_nuclear_accident",
+      "UNSCEAR 2020/2021 Report"
+    ]
+  },
+  {
+    "id": "kyshtym-1957",
+    "name": "Kyshtym / Mayak waste tank explosion",
+    "year": 1957,
+    "country": "Soviet Union (Russia)",
+    "source_type": "Nuclear",
+    "direct_deaths": 0,
+    "estimated_deaths_low": 50,
+    "estimated_deaths_high": 200,
+    "short_description": "A high-level waste tank at the Mayak plutonium facility in the Urals lost cooling, dried out, and detonated chemically (not nuclear). Released 20 MCi of fission products (~40%% of Chernobyl release). 22 villages evacuated; no evacuation of the 270,000 residents of the wider contaminated zone for years. Kept secret by Soviet authorities until 1990.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Kyshtym_disaster"
+    ]
+  },
+  {
+    "id": "tmi-1979",
+    "name": "Three Mile Island partial meltdown",
+    "year": 1979,
+    "country": "USA",
+    "source_type": "Nuclear",
+    "direct_deaths": 0,
+    "estimated_deaths_low": 0,
+    "estimated_deaths_high": 0,
+    "short_description": "Stuck-open relief valve and operator misreading led to partial core meltdown in Unit 2. Containment held; only ~480 PBq of noble gases released (mostly Kr-85). No measurable health impact in multiple long-term epidemiological studies. Ended new US nuclear builds for 30 years and prompted the formation of INPO.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Three_Mile_Island_accident"
+    ]
+  },
+  {
+    "id": "benxihu-1942",
+    "name": "Benxihu coal-mine explosion",
+    "year": 1942,
+    "country": "Occupied China (Japan)",
+    "source_type": "Coal",
+    "direct_deaths": 1549,
+    "estimated_deaths_low": 1549,
+    "estimated_deaths_high": 1549,
+    "short_description": "Gas-and-dust explosion in an occupied Manchurian coal mine worked by Chinese forced labour under Japanese management. The deadliest mining disaster in history by a wide margin. Japanese guards sealed the ventilation shafts to contain the fire, suffocating survivors. 34%% of the mine workforce died in a single day.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Benxihu_Colliery"
+    ]
+  },
+  {
+    "id": "courrieres-1906",
+    "name": "Courrieres coal-mine explosion",
+    "year": 1906,
+    "country": "France",
+    "source_type": "Coal",
+    "direct_deaths": 1099,
+    "estimated_deaths_low": 1099,
+    "estimated_deaths_high": 1099,
+    "short_description": "Coal-dust explosion in the Pas-de-Calais basin. The deadliest European mining disaster, and the event that triggered the general strike and subsequent French labour law reforms. Rescue took 20 days; some miners emerged alive after 3 weeks underground.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Courrieres_mine_disaster"
+    ]
+  },
+  {
+    "id": "monongah-1907",
+    "name": "Monongah mine explosion",
+    "year": 1907,
+    "country": "USA",
+    "source_type": "Coal",
+    "direct_deaths": 362,
+    "estimated_deaths_low": 362,
+    "estimated_deaths_high": 500,
+    "short_description": "West Virginia coal-dust explosion. Official count 362 but many unreported immigrant workers make the true figure possibly 500+. Led directly to the creation of the US Bureau of Mines in 1910.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Monongah_mining_disaster"
+    ]
+  },
+  {
+    "id": "soma-2014",
+    "name": "Soma mine fire",
+    "year": 2014,
+    "country": "Turkey",
+    "source_type": "Coal",
+    "direct_deaths": 301,
+    "estimated_deaths_low": 301,
+    "estimated_deaths_high": 301,
+    "short_description": "Underground fire / carbon-monoxide poisoning in a privatised Turkish coal mine. Investigators found falsified safety records and undersized refuge chambers. Sparked nationwide protests over mining deregulation.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Soma_mine_disaster"
+    ]
+  },
+  {
+    "id": "piper-alpha-1988",
+    "name": "Piper Alpha oil platform explosion",
+    "year": 1988,
+    "country": "UK (North Sea)",
+    "source_type": "Oil & Gas",
+    "direct_deaths": 167,
+    "estimated_deaths_low": 167,
+    "estimated_deaths_high": 167,
+    "short_description": "Condensate pump was restarted with a temporary blind flange replacing its relief valve. Catastrophic leak, ignition, and full platform loss in ~2 hours. 62 of 229 crew survived by jumping into the sea. Cullen Inquiry reshaped offshore safety worldwide and invented the modern 'safety case' regulatory regime.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Piper_Alpha",
+      "Cullen Inquiry Report (1990)"
+    ]
+  },
+  {
+    "id": "deepwater-horizon-2010",
+    "name": "Deepwater Horizon blowout",
+    "year": 2010,
+    "country": "USA (Gulf of Mexico)",
+    "source_type": "Oil & Gas",
+    "direct_deaths": 11,
+    "estimated_deaths_low": 11,
+    "estimated_deaths_high": 11,
+    "short_description": "Cementing failure on the Macondo well allowed gas into the riser; BOP failed to shear. Rig burned for 36 hours before sinking. 87-day uncontrolled release of 4.9 million barrels of oil — the largest marine oil spill in history. Primary environmental catastrophe; direct fatality count is modest.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Deepwater_Horizon_explosion"
+    ]
+  },
+  {
+    "id": "san-juanico-1984",
+    "name": "San Juanico LPG depot BLEVE",
+    "year": 1984,
+    "country": "Mexico",
+    "source_type": "Oil & Gas",
+    "direct_deaths": 500,
+    "estimated_deaths_low": 500,
+    "estimated_deaths_high": 600,
+    "short_description": "PEMEX LPG storage facility in a Mexico City suburb experienced a series of BLEVEs (boiling-liquid expanding-vapour explosions) after a pipe rupture. Fireballs reached 400 m diameter and incinerated the surrounding shantytowns. ~5,000-7,000 injuries. Textbook case in hazardous-facility land-use planning.",
+    "references": [
+      "https://en.wikipedia.org/wiki/San_Juanico_disaster"
+    ]
+  },
+  {
+    "id": "texas-city-2005",
+    "name": "Texas City refinery explosion",
+    "year": 2005,
+    "country": "USA",
+    "source_type": "Oil & Gas",
+    "direct_deaths": 15,
+    "estimated_deaths_low": 15,
+    "estimated_deaths_high": 15,
+    "short_description": "BP isomerisation unit overflowed during startup; vapour cloud ignited from a running pickup truck engine. 180 injuries. CSB investigation cited systemic cost-cutting and ageing infrastructure. Preceded Deepwater Horizon by 5 years under the same BP leadership.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Texas_City_Refinery_explosion"
+    ]
+  },
+  {
+    "id": "ghislenghien-2004",
+    "name": "Ghislenghien gas-pipeline explosion",
+    "year": 2004,
+    "country": "Belgium",
+    "source_type": "Oil & Gas",
+    "direct_deaths": 24,
+    "estimated_deaths_low": 24,
+    "estimated_deaths_high": 24,
+    "short_description": "Construction excavator damaged a 1 m high-pressure natural-gas pipeline. Gas cloud ignited 90 minutes later, killing 5 firefighters who had arrived to evacuate the site. Changed European pre-excavation survey norms for buried infrastructure.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Ghislenghien_gas_explosion"
+    ]
+  },
+  {
+    "id": "kaohsiung-2014",
+    "name": "Kaohsiung gas explosions",
+    "year": 2014,
+    "country": "Taiwan",
+    "source_type": "Oil & Gas",
+    "direct_deaths": 32,
+    "estimated_deaths_low": 32,
+    "estimated_deaths_high": 32,
+    "short_description": "Propylene leaked from a corroded LCY Chemical pipeline running under city streets. Gas collected in storm drains for three hours before igniting, blasting 6 km of trenches through densely-populated neighbourhoods.",
+    "references": [
+      "https://en.wikipedia.org/wiki/2014_Kaohsiung_gas_explosions"
+    ]
+  },
+  {
+    "id": "aberfan-1966",
+    "name": "Aberfan colliery spoil-tip collapse",
+    "year": 1966,
+    "country": "UK",
+    "source_type": "Coal",
+    "direct_deaths": 144,
+    "estimated_deaths_low": 144,
+    "estimated_deaths_high": 144,
+    "short_description": "National Coal Board waste tip slid onto a Welsh village school, killing 116 children and 28 adults. Tribunal found the NCB had knowingly built the tip on a spring. No prosecutions; no board member was demoted. Led to the UK Mines and Quarries (Tips) Act 1969.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Aberfan_disaster"
+    ]
+  }
+]

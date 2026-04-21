@@ -1,0 +1,90 @@
+[
+  {
+    "source": "Coal",
+    "median_gco2eq_kwh": 820,
+    "p5_gco2eq_kwh": 740,
+    "p95_gco2eq_kwh": 910,
+    "notes": "Subcritical to ultra-supercritical pulverised coal without CCS. Combustion dominates (>95%); mining and transport add a few %.",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  },
+  {
+    "source": "Gas",
+    "median_gco2eq_kwh": 490,
+    "p5_gco2eq_kwh": 410,
+    "p95_gco2eq_kwh": 650,
+    "notes": "Combined-cycle gas turbine without CCS. Upstream methane leakage is the main uncertainty — 0.5%% leakage adds ~30 gCO2eq/kWh; 3%% leakage adds ~180.",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  },
+  {
+    "source": "Oil",
+    "median_gco2eq_kwh": 650,
+    "p5_gco2eq_kwh": 510,
+    "p95_gco2eq_kwh": 840,
+    "notes": "Residual fuel oil for power generation. Largely phased out in OECD countries; still used for peaking in island grids.",
+    "reference": "IPCC AR5 WGIII Annex III (AR6 did not refresh)"
+  },
+  {
+    "source": "Biomass",
+    "median_gco2eq_kwh": 230,
+    "p5_gco2eq_kwh": 130,
+    "p95_gco2eq_kwh": 420,
+    "notes": "Wide range reflects deep disagreement on whether combustion CO2 should be zero-counted. The value shown uses IPCC AR6 methodology with land-use-change emissions included; 'zero-carbon' accounting gives 40-60 gCO2eq/kWh.",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  },
+  {
+    "source": "Solar",
+    "median_gco2eq_kwh": 48,
+    "p5_gco2eq_kwh": 18,
+    "p95_gco2eq_kwh": 180,
+    "notes": "Utility-scale PV. Range driven by the carbon intensity of the grid that produced the panels (China-made panels on coal grid sit at the high end).",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  },
+  {
+    "source": "Wind",
+    "median_gco2eq_kwh": 11,
+    "p5_gco2eq_kwh": 7,
+    "p95_gco2eq_kwh": 56,
+    "notes": "Onshore wind. Offshore is slightly higher (median ~12, p95 ~25) because of heavier foundations and subsea cabling.",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  },
+  {
+    "source": "Hydro",
+    "median_gco2eq_kwh": 24,
+    "p5_gco2eq_kwh": 1,
+    "p95_gco2eq_kwh": 2200,
+    "notes": "Enormous range. Run-of-river and high-latitude reservoirs: <5 gCO2eq/kWh. Tropical reservoirs with flooded biomass (e.g. Brazilian Amazon): hundreds to thousands from methane emissions. P95 reflects a handful of worst-case tropical projects.",
+    "reference": "IPCC AR6 WGIII Annex III; Scherer & Pfister 2016 for tropical methane"
+  },
+  {
+    "source": "Nuclear",
+    "median_gco2eq_kwh": 12,
+    "p5_gco2eq_kwh": 3,
+    "p95_gco2eq_kwh": 110,
+    "notes": "LWR with centrifuge enrichment. Lower end: reactors built in low-carbon grids with high-grade uranium (Canada). Upper end: legacy gaseous diffusion enrichment on coal-fired grids.",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  },
+  {
+    "source": "Geothermal",
+    "median_gco2eq_kwh": 38,
+    "p5_gco2eq_kwh": 6,
+    "p95_gco2eq_kwh": 80,
+    "notes": "Flash plants in high-CO2 geological formations (e.g. parts of Italy, Turkey) can emit considerable geogenic CO2 during operation. Binary plants are much cleaner.",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  },
+  {
+    "source": "Coal + CCS",
+    "median_gco2eq_kwh": 160,
+    "p5_gco2eq_kwh": 60,
+    "p95_gco2eq_kwh": 330,
+    "notes": "With 90%% capture. Residual emissions are mostly upstream (coal mining methane + CCS parasitic load reduces net output).",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  },
+  {
+    "source": "Gas + CCS",
+    "median_gco2eq_kwh": 130,
+    "p5_gco2eq_kwh": 80,
+    "p95_gco2eq_kwh": 220,
+    "notes": "CCGT with 90%% capture. Methane leakage dominates the residual.",
+    "reference": "IPCC AR6 WGIII Annex III, Table A.III.2"
+  }
+]

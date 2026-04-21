@@ -1,5 +1,9 @@
-# Generated data
-data/
+# Generated data (runtime SQLite + parquet cache under webapp/data/).
+# The leading slash restricts the rule to webapp/data/, so the
+# curated static JSON under webapp/backend/data/ (accidents.json,
+# nuclear_waste.json, lifecycle_carbon.json, land_use.json,
+# fossil_pollution_deaths.json) is still committed to the repo.
+/data/
 *.db
 *.db-journal
 *.db-wal

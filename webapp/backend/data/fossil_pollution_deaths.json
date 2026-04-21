@@ -1,0 +1,75 @@
+{
+  "headline": {
+    "global_annual_deaths_from_fossil_pm25": {
+      "vohra_2021_central": 8700000,
+      "lelieveld_2019_central": 3610000,
+      "burnett_2018_central": 3450000
+    },
+    "commentary": "The three major estimates for annual global deaths from fossil-fuel PM2.5 differ by ~2.5x. Vohra et al. use GEOS-Chem chemical transport modelling coupled with newer concentration-response functions; Lelieveld and Burnett use the GBD integrated exposure-response curves. All three agree that fossil-fuel combustion is responsible for ~1 in 5 adult deaths globally from outdoor air pollution."
+  },
+  "by_source": [
+    {
+      "source": "Coal",
+      "annual_global_deaths_vohra_2021": 3900000,
+      "share_of_fossil_total_pct": 45,
+      "notes": "Single largest source category. Asia (especially China and India) accounts for >60%% of the total. Both power generation and residential coal heating contribute.",
+      "reference": "Vohra et al. 2021, Environmental Research — supplementary Table S2"
+    },
+    {
+      "source": "Gas",
+      "annual_global_deaths_vohra_2021": 470000,
+      "share_of_fossil_total_pct": 5,
+      "notes": "Lower per-TWh than coal because gas combustion releases less PM2.5 and fewer SO2/NOx precursors. Still non-zero because of NO2 formation in combustion.",
+      "reference": "Vohra et al. 2021, Environmental Research — supplementary Table S2"
+    },
+    {
+      "source": "Oil",
+      "annual_global_deaths_vohra_2021": 1700000,
+      "share_of_fossil_total_pct": 20,
+      "notes": "Mostly transport (road + shipping + aviation), not power generation. Bunker fuel for shipping is particularly SO2-heavy.",
+      "reference": "Vohra et al. 2021, Environmental Research — supplementary Table S2"
+    },
+    {
+      "source": "Other fossil + secondary",
+      "annual_global_deaths_vohra_2021": 2600000,
+      "share_of_fossil_total_pct": 30,
+      "notes": "Secondary aerosol formation from mixed fossil sources, industrial coke, petrochemical operations. Hard to attribute to a single category.",
+      "reference": "Vohra et al. 2021, Environmental Research — supplementary Table S2"
+    }
+  ],
+  "by_region": [
+    {"region": "East Asia", "annual_deaths": 3900000, "note": "China + neighbours; improving since 2013 with air quality action plans."},
+    {"region": "South Asia", "annual_deaths": 2200000, "note": "India + neighbours; trend still rising in most countries."},
+    {"region": "Europe", "annual_deaths": 400000, "note": "Dropped ~50%% since 1990 via sulphur limits + coal phase-out."},
+    {"region": "Africa", "annual_deaths": 400000, "note": "Rising with urbanisation; combustion of kerosene and coal for cooking/heating."},
+    {"region": "Americas", "annual_deaths": 500000, "note": "North America down sharply; Mexico and parts of South America still growing."},
+    {"region": "Middle East", "annual_deaths": 200000, "note": "Heavy oil products and large-point-source refineries."},
+    {"region": "Other", "annual_deaths": 1100000, "note": "Oceania + residual attribution."}
+  ],
+  "historical_famous_events": [
+    {
+      "event": "London Great Smog",
+      "year": 1952,
+      "direct_deaths": 4000,
+      "latent_deaths_estimate": 12000,
+      "notes": "Coal smoke stagnation event in December 1952. Catalysed the UK Clean Air Act 1956.",
+      "reference": "Bell et al. 2004, Environ. Health Perspect."
+    },
+    {
+      "event": "Donora smog",
+      "year": 1948,
+      "direct_deaths": 20,
+      "latent_deaths_estimate": 50,
+      "notes": "Pennsylvania steel-town smog event. 6,000 sickened out of 14,000 residents over five days.",
+      "reference": "US EPA historical record"
+    },
+    {
+      "event": "Meuse Valley fog",
+      "year": 1930,
+      "direct_deaths": 60,
+      "latent_deaths_estimate": null,
+      "notes": "Industrial valley in Belgium. First clearly-documented deadly air-pollution episode in modern records.",
+      "reference": "Nemery et al. 2001, The Lancet"
+    }
+  ]
+}

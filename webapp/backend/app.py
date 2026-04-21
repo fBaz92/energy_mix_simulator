@@ -16,8 +16,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from webapp.backend.db import init_db
+from webapp.backend.routes.datasets import router as datasets_router
 from webapp.backend.routes.scenarios import router as scenarios_router
 from webapp.backend.routes.simulations import router as simulations_router
 from webapp.backend.routes.sweeps import router as sweeps_router
@@ -64,10 +66,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Compress responses above ~1 KB — the carbon-intensity country-year
+# dataset is ~500 KB of JSON and benefits from >5x compression.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 # Register route modules
 app.include_router(scenarios_router)
 app.include_router(simulations_router)
 app.include_router(sweeps_router)
+app.include_router(datasets_router)
 
 
 @app.get("/api/health")
