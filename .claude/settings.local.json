@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_dataset_parsers.py tests/test_datasets_static.py -v)",
+      "Bash(python -m pip install --user pytest pytest-asyncio httpx aiosqlite fastapi pydantic uvicorn pyarrow numpy scipy)",
+      "Bash(python -m pytest tests/test_datasets_ingest.py -v)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(python -m pytest tests/test_dataset_parsers.py tests/test_datasets_static.py tests/test_datasets_ingest.py -q)",
+      "Bash(python -m pytest tests/ -q -m \"not slow\")",
+      "Bash(python -m pip show uvicorn)",
+      "Bash(python -c \"import sys; print\\('user_site:', [p for p in sys.path if 'Roaming' in p][:3]\\)\")",
+      "Bash(python -c \"import site; print\\('enable_user_site:', site.ENABLE_USER_SITE\\); print\\('user_site:', site.getusersitepackages\\(\\)\\)\")",
+      "Bash(python -c \"import uvicorn; print\\('uvicorn OK, path:', uvicorn.__file__\\)\")",
+      "Bash(python -m uvicorn --version)"
+    ]
+  }
+}
